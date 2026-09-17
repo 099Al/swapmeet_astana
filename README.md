@@ -31,7 +31,8 @@ RETENTION_PERIOD_DAYS=7
 
 ```bash
 uv sync
-uv run swapmeet-astana
+$env:PYTHONPATH="src"
+uv run python -m bot
 ```
 
 Или:
