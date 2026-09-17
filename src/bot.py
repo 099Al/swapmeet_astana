@@ -93,6 +93,7 @@ def build_router(ctx: AppContext) -> Router:
             return
 
         category = None if message.text == CATEGORY_ALL else message.text
+        await delete_chat_feed_messages(message.bot, ctx, message.chat.id)
         await message.answer("Лента объявлений:", reply_markup=main_menu())
         await show_feed(message, ctx, category=category)
 
@@ -400,6 +401,22 @@ async def delete_known_messages(bot: Bot, ctx: AppContext, ad_id: int) -> None:
                 continue
 
 
+async def delete_chat_feed_messages(bot: Bot, ctx: AppContext, chat_id: int) -> None:
+    empty_ad_ids: list[int] = []
+    for ad_id, chats in ctx.user_messages.items():
+        message_ids = chats.pop(chat_id, [])
+        for message_id in message_ids:
+            try:
+                await bot.delete_message(chat_id=chat_id, message_id=message_id)
+            except TelegramBadRequest:
+                continue
+        if not chats:
+            empty_ad_ids.append(ad_id)
+
+    for ad_id in empty_ad_ids:
+        ctx.user_messages.pop(ad_id, None)
+
+
 def is_forwarded(message: Message) -> bool:
     return getattr(message, "forward_origin", None) is not None or getattr(message, "forward_date", None) is not None
 
@@ -425,5 +442,7 @@ async def run() -> None:
     await dispatcher.start_polling(bot)
 
 
-def main() -> None:
+
+
+if __name__ == "__main__":
     asyncio.run(run())
