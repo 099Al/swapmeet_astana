@@ -1,0 +1,2 @@
+"""Swapmeet Astana Telegram bot."""
+

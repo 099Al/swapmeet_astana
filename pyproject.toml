@@ -7,10 +7,14 @@ authors = [
     { name = "efimov_as", email = "efimov_as@tochka.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "aiogram>=3.13,<4",
+    "pillow>=10,<12",
+    "python-dotenv>=1,<2",
+]
 
 [project.scripts]
-swapmeet-astana = "swapmeet_astana:main"
+swapmeet-astana = "swapmeet_astana.bot:main"
 
 [build-system]
 requires = ["uv_build>=0.12.6,<0.13.0"]
