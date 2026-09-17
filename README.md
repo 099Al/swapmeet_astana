@@ -36,6 +36,7 @@ uv run swapmeet-astana
 
 Или:
 
-```bash
-python -m swapmeet_astana.bot
+```powershell
+$env:PYTHONPATH="src"
+python -m bot
 ```

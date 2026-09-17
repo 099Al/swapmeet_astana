@@ -14,10 +14,10 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import CallbackQuery, Message
 from aiogram.utils.markdown import hbold
 
-from .config import Settings, load_settings
-from .db import Ad, Database
-from .images import dhash
-from .keyboards import (
+from config import Settings, load_settings
+from db import Ad, Database
+from images import dhash
+from keyboards import (
     BTN_BACK,
     BTN_BUY,
     BTN_CATEGORIES,
