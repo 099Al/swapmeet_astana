@@ -32,6 +32,13 @@ class AdMessage:
     photo_index: int
 
 
+@dataclass(frozen=True)
+class UiMessage:
+    chat_id: int
+    message_id: int
+    message_kind: str
+
+
 class Database:
     def __init__(self, path: str) -> None:
         self.path = path
@@ -113,6 +120,15 @@ class Database:
                     created_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS ui_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chat_id INTEGER NOT NULL,
+                    message_id INTEGER NOT NULL,
+                    message_kind TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(chat_id, message_id)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_market_active_created
                     ON market(status, created_at);
                 CREATE INDEX IF NOT EXISTS idx_market_user_created
@@ -123,6 +139,8 @@ class Database:
                     ON ad_messages(ad_id);
                 CREATE INDEX IF NOT EXISTS idx_ad_messages_chat
                     ON ad_messages(chat_id);
+                CREATE INDEX IF NOT EXISTS idx_ui_messages_chat
+                    ON ui_messages(chat_id);
                 """
             )
 
@@ -284,6 +302,34 @@ class Database:
             row = conn.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,)).fetchone()
         return row is not None
 
+    def save_ui_message(self, *, chat_id: int, message_id: int, message_kind: str) -> None:
+        now = datetime.now().isoformat(timespec="seconds")
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO ui_messages (chat_id, message_id, message_kind, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (chat_id, message_id, message_kind, now),
+            )
+
+    def ui_messages_for_chat(self, chat_id: int) -> list[UiMessage]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT chat_id, message_id, message_kind
+                FROM ui_messages
+                WHERE chat_id = ?
+                ORDER BY id
+                """,
+                (chat_id,),
+            ).fetchall()
+        return [_ui_message_from_row(row) for row in rows]
+
+    def delete_ui_messages_for_chat(self, chat_id: int) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM ui_messages WHERE chat_id = ?", (chat_id,))
+
     def count_user_ads_today(self, user_id: int, ad_type: str | None = None) -> int:
         start = _start_of_day(datetime.now()).isoformat()
         sql = "SELECT COUNT(*) FROM market WHERE user_id = ? AND created_at >= ?"
@@ -442,6 +488,14 @@ def _ad_message_from_row(row: sqlite3.Row) -> AdMessage:
         message_id=int(row["message_id"]),
         message_kind=str(row["message_kind"]),
         photo_index=int(row["photo_index"]),
+    )
+
+
+def _ui_message_from_row(row: sqlite3.Row) -> UiMessage:
+    return UiMessage(
+        chat_id=int(row["chat_id"]),
+        message_id=int(row["message_id"]),
+        message_kind=str(row["message_kind"]),
     )
 
 

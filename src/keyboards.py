@@ -43,6 +43,12 @@ def categories_menu(include_all: bool = True, placeholder: str | None = None) ->
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, input_field_placeholder=placeholder)
 
 
+def inline_categories_menu() -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text=category, callback_data=f"category:{category}")] for category in CATEGORIES]
+    rows.append([InlineKeyboardButton(text=CATEGORY_ALL, callback_data="category:all")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def create_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=BTN_SELL), KeyboardButton(text=BTN_BUY)], [KeyboardButton(text=BTN_BACK)]],

@@ -32,6 +32,7 @@ from keyboards import (
     CATEGORY_ALL,
     categories_menu,
     create_menu,
+    inline_categories_menu,
     main_menu,
     photo_menu,
     remove_reason_keyboard,
@@ -77,11 +78,15 @@ def build_router(ctx: AppContext) -> Router:
 
     @router.message(F.text == BTN_CATEGORIES)
     async def categories(message: Message) -> None:
-        await replace_user_command_with_reply_markup(
-            message,
-            BTN_CATEGORIES,
-            categories_menu(include_all=True, placeholder="Выберите категорию"),
-        )
+        await message.answer("Выберите категорию:", reply_markup=inline_categories_menu())
+
+    @router.callback_query(F.data.startswith("category:"))
+    async def filter_category_inline(callback: CallbackQuery) -> None:
+        category_code = callback.data.split(":", 1)[1]
+        category = None if category_code == "all" else category_code
+        await delete_chat_feed_messages(callback.bot, ctx, callback.message.chat.id)
+        await callback.answer()
+        await show_feed(callback.message, ctx, category=category, attach_main_menu=True)
 
     @router.message(F.text.in_((*CATEGORIES, CATEGORY_ALL)))
     async def filter_category(message: Message, state: FSMContext) -> None:
@@ -390,7 +395,8 @@ async def is_daily_limit_exceeded(message: Message, ctx: AppContext, ad_type: st
 async def show_feed(message: Message, ctx: AppContext, category: str | None = None, attach_main_menu: bool = False) -> None:
     ads = ctx.db.active_ads(ctx.settings.retention_period_days, category=category)
     if not ads:
-        await message.answer("Активных объявлений пока нет.", reply_markup=main_menu())
+        sent = await message.answer("Активных объявлений пока нет.", reply_markup=main_menu())
+        ctx.db.save_ui_message(chat_id=message.chat.id, message_id=sent.message_id, message_kind="empty_feed")
         return
     for index, ad in enumerate(ads):
         await show_one_ad(message, ctx, ad, reply_markup=main_menu() if attach_main_menu and index == 0 else None)
@@ -493,6 +499,16 @@ async def delete_chat_feed_messages(bot: Bot, ctx: AppContext, chat_id: int) -> 
         except TelegramBadRequest:
             continue
     ctx.db.delete_ad_messages_for_chat(chat_id)
+    await delete_ui_messages(bot, ctx, chat_id)
+
+
+async def delete_ui_messages(bot: Bot, ctx: AppContext, chat_id: int) -> None:
+    for saved_message in ctx.db.ui_messages_for_chat(chat_id):
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=saved_message.message_id)
+        except TelegramBadRequest:
+            continue
+    ctx.db.delete_ui_messages_for_chat(chat_id)
 
 
 def is_forwarded(message: Message) -> bool:
