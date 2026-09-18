@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ParseMode
@@ -11,7 +11,7 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InputMediaPhoto, Message
 from aiogram.utils.markdown import hbold
 
 from config import Settings, load_settings
@@ -37,6 +37,7 @@ from keyboards import (
 )
 
 MAX_BUY_DESCRIPTION = 500
+MAX_SELL_PHOTOS = 5
 
 
 class CreateAd(StatesGroup):
@@ -53,7 +54,6 @@ class CreateAd(StatesGroup):
 class AppContext:
     settings: Settings
     db: Database
-    user_messages: dict[int, dict[int, list[int]]] = field(default_factory=dict)
 
 
 def build_router(ctx: AppContext) -> Router:
@@ -133,8 +133,12 @@ def build_router(ctx: AppContext) -> Router:
         if await is_daily_limit_exceeded(message, ctx, ad_type=None, limit=ctx.settings.user_daily_ad_limit):
             await message.answer("Превышен суточный лимит объявлений.")
             return
-        await state.set_state(CreateAd.sell_category)
-        await message.answer("Укажите категорию:", reply_markup=categories_menu(include_all=False))
+        await state.update_data(photos=[])
+        await state.set_state(CreateAd.sell_photos)
+        await message.answer(
+            f"Добавьте фото объявления. Можно отправить до {MAX_SELL_PHOTOS} фото. Когда закончите, нажмите «Готово».",
+            reply_markup=photo_menu(),
+        )
 
     @router.message(CreateAd.sell_description)
     async def sell_description(message: Message, state: FSMContext) -> None:
@@ -160,35 +164,12 @@ def build_router(ctx: AppContext) -> Router:
         await message.answer("Укажите адрес")
 
     @router.message(CreateAd.sell_address)
-    async def sell_address(message: Message, state: FSMContext) -> None:
+    async def finish_sell(message: Message, state: FSMContext) -> None:
         text = (message.text or "").strip()
         if not text:
             await message.answer("Адрес обязателен.")
             return
-        await state.update_data(address=text, photos=[])
-        await state.set_state(CreateAd.sell_photos)
-        await message.answer("Добавьте фото объявления. Когда закончите, нажмите «Готово».", reply_markup=photo_menu())
-
-    @router.message(CreateAd.sell_photos, F.photo)
-    async def sell_photo(message: Message, state: FSMContext, bot: Bot) -> None:
-        if is_forwarded(message):
-            await message.answer("Пересланные объявления внутри бота не допускаются.")
-            return
-        photo = message.photo[-1]
-        file = await bot.get_file(photo.file_id)
-        stream = await bot.download_file(file.file_path)
-        if stream is None:
-            await message.answer("Не удалось скачать фото, попробуйте другое.")
-            return
-        image_hash = dhash(stream.read())
-        data = await state.get_data()
-        photos: list[tuple[str, str, str]] = data.get("photos", [])
-        photos.append((photo.file_id, photo.file_unique_id, image_hash))
-        await state.update_data(photos=photos)
-        await message.answer("Фото добавлено.")
-
-    @router.message(CreateAd.sell_photos, F.text.in_((BTN_DONE, BTN_SKIP_PHOTOS)))
-    async def finish_sell(message: Message, state: FSMContext) -> None:
+        await state.update_data(address=text)
         data = await state.get_data()
         photos: list[tuple[str, str, str]] = data.get("photos", [])
         if has_duplicate_in_batch([item[2] for item in photos]):
@@ -218,12 +199,92 @@ def build_router(ctx: AppContext) -> Router:
             category=data["category"],
             description=data["description"],
             price=data["price"],
-            address=data["address"],
+            address=text,
             photos=photos,
         )
         await state.clear()
         await message.answer("Объявление создано.", reply_markup=main_menu())
         await show_one_ad(message, ctx, ctx.db.get_ad(ad_id))
+
+    @router.message(CreateAd.sell_photos, F.photo)
+    async def sell_photo(message: Message, state: FSMContext, bot: Bot) -> None:
+        if is_forwarded(message):
+            await message.answer("Пересланные объявления внутри бота не допускаются.")
+            return
+        photo = message.photo[-1]
+        file = await bot.get_file(photo.file_id)
+        stream = await bot.download_file(file.file_path)
+        if stream is None:
+            await message.answer("Не удалось скачать фото, попробуйте другое.")
+            return
+        image_hash = dhash(stream.read())
+        data = await state.get_data()
+        photos: list[tuple[str, str, str]] = data.get("photos", [])
+        if len(photos) >= MAX_SELL_PHOTOS:
+            await message.answer(f"Можно добавить не больше {MAX_SELL_PHOTOS} фото.")
+            return
+        photos.append((photo.file_id, photo.file_unique_id, image_hash))
+        await state.update_data(photos=photos)
+        await message.answer(f"Фото добавлено: {len(photos)}/{MAX_SELL_PHOTOS}.")
+
+    @router.message(CreateAd.sell_photos, F.text.in_((BTN_DONE, BTN_SKIP_PHOTOS)))
+    async def finish_sell_photos(message: Message, state: FSMContext) -> None:
+        data = await state.get_data()
+        photos: list[tuple[str, str, str]] = data.get("photos", [])
+        if message.text == BTN_DONE and not photos:
+            await message.answer("Добавьте хотя бы одно фото или нажмите «Без фото».")
+            return
+        if has_duplicate_in_batch([item[2] for item in photos]):
+            await state.clear()
+            await message.answer(
+                "Создание отклонено: среди загруженных фото есть повтор.",
+                reply_markup=main_menu(),
+            )
+            return
+        duplicate_ad_id = ctx.db.find_duplicate_hash(
+            message.from_user.id,
+            [item[2] for item in photos],
+            ctx.settings.duplicate_photo_days,
+        )
+        if duplicate_ad_id is not None:
+            await state.clear()
+            await message.answer(
+                f"Создание отклонено: похожее фото уже было в объявлении #{duplicate_ad_id} за последние "
+                f"{ctx.settings.duplicate_photo_days} дней.",
+                reply_markup=main_menu(),
+            )
+            return
+        await state.set_state(CreateAd.sell_category)
+        await message.answer("Укажите категорию:", reply_markup=categories_menu(include_all=False))
+
+    @router.callback_query(F.data.startswith("photo:"))
+    async def switch_photo(callback: CallbackQuery) -> None:
+        _, ad_id_text, index_text = callback.data.split(":", 2)
+        ad_id = int(ad_id_text)
+        photo_index = int(index_text)
+        ad = ctx.db.get_ad(ad_id)
+        photos = ctx.db.ad_photos(ad_id)
+        if ad is None or ad.status != "active" or not photos:
+            await callback.answer("Объявление недоступно", show_alert=True)
+            return
+        photo_index %= len(photos)
+        keyboard = ad_keyboard(
+            ad.id,
+            is_author=callback.from_user.id == ad.user_id,
+            is_reserved=ad.reserved_by is not None,
+            photo_count=len(photos),
+            photo_index=photo_index,
+        )
+        await callback.message.edit_media(
+            InputMediaPhoto(media=photos[photo_index], caption=render_ad(ad), parse_mode=ParseMode.HTML),
+            reply_markup=keyboard,
+        )
+        ctx.db.update_ad_message_photo_index(ad_id, callback.message.chat.id, callback.message.message_id, photo_index)
+        await callback.answer()
+
+    @router.callback_query(F.data.startswith("photo_noop:"))
+    async def photo_noop(callback: CallbackQuery) -> None:
+        await callback.answer()
 
     @router.callback_query(F.data.startswith("reserve_start:"))
     async def reserve_start(callback: CallbackQuery) -> None:
@@ -331,12 +392,35 @@ async def show_one_ad(message: Message, ctx: AppContext, ad: Ad | None) -> None:
         return
     photos = ctx.db.ad_photos(ad.id)
     text = render_ad(ad)
-    keyboard = ad_keyboard(ad.id, is_author=message.from_user.id == ad.user_id, is_reserved=ad.reserved_by is not None)
+    keyboard = ad_keyboard(
+        ad.id,
+        is_author=message.from_user.id == ad.user_id,
+        is_reserved=ad.reserved_by is not None,
+        photo_count=len(photos),
+        photo_index=0,
+    )
     if photos:
-        sent = await message.answer_photo(photos[0], caption=text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+        sent = await message.answer_photo(
+            photos[0],
+            caption=text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
+        )
+        ctx.db.save_ad_message(
+            ad_id=ad.id,
+            chat_id=message.chat.id,
+            message_id=sent.message_id,
+            message_kind="photo",
+            photo_index=0,
+        )
     else:
         sent = await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
-    ctx.user_messages.setdefault(ad.id, {}).setdefault(message.chat.id, []).append(sent.message_id)
+        ctx.db.save_ad_message(
+            ad_id=ad.id,
+            chat_id=message.chat.id,
+            message_id=sent.message_id,
+            message_kind="text",
+        )
 
 
 def render_ad(ad: Ad) -> str:
@@ -361,60 +445,56 @@ async def refresh_known_messages(bot: Bot, ctx: AppContext, ad_id: int) -> None:
     ad = ctx.db.get_ad(ad_id)
     if ad is None:
         return
-    known = ctx.user_messages.get(ad_id, {})
-    for chat_id, message_ids in list(known.items()):
-        for message_id in list(message_ids):
-            try:
-                keyboard = ad_keyboard(ad.id, is_author=chat_id == ad.user_id, is_reserved=ad.reserved_by is not None)
-                await bot.edit_message_reply_markup(
-                    chat_id=chat_id,
-                    message_id=message_id,
+    photos = ctx.db.ad_photos(ad_id)
+    for saved_message in ctx.db.ad_messages(ad_id):
+        photo_index = saved_message.photo_index % len(photos) if photos else 0
+        keyboard = ad_keyboard(
+            ad.id,
+            is_author=saved_message.chat_id == ad.user_id,
+            is_reserved=ad.reserved_by is not None,
+            photo_count=len(photos),
+            photo_index=photo_index,
+        )
+        try:
+            if saved_message.message_kind == "photo" and photos:
+                await bot.edit_message_media(
+                    chat_id=saved_message.chat_id,
+                    message_id=saved_message.message_id,
+                    media=InputMediaPhoto(
+                        media=photos[photo_index],
+                        caption=render_ad(ad),
+                        parse_mode=ParseMode.HTML,
+                    ),
                     reply_markup=keyboard,
                 )
-                await bot.edit_message_caption(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    caption=render_ad(ad),
+            else:
+                await bot.edit_message_text(
+                    chat_id=saved_message.chat_id,
+                    message_id=saved_message.message_id,
+                    text=render_ad(ad),
                     parse_mode=ParseMode.HTML,
                     reply_markup=keyboard,
                 )
-            except TelegramBadRequest:
-                try:
-                    await bot.edit_message_text(
-                        chat_id=chat_id,
-                        message_id=message_id,
-                        text=render_ad(ad),
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=ad_keyboard(ad.id, is_author=chat_id == ad.user_id, is_reserved=ad.reserved_by is not None),
-                    )
-                except TelegramBadRequest:
-                    continue
+        except TelegramBadRequest:
+            continue
 
 
 async def delete_known_messages(bot: Bot, ctx: AppContext, ad_id: int) -> None:
-    known = ctx.user_messages.pop(ad_id, {})
-    for chat_id, message_ids in known.items():
-        for message_id in message_ids:
-            try:
-                await bot.delete_message(chat_id=chat_id, message_id=message_id)
-            except TelegramBadRequest:
-                continue
+    for saved_message in ctx.db.ad_messages(ad_id):
+        try:
+            await bot.delete_message(chat_id=saved_message.chat_id, message_id=saved_message.message_id)
+        except TelegramBadRequest:
+            continue
+    ctx.db.delete_ad_messages_for_ad(ad_id)
 
 
 async def delete_chat_feed_messages(bot: Bot, ctx: AppContext, chat_id: int) -> None:
-    empty_ad_ids: list[int] = []
-    for ad_id, chats in ctx.user_messages.items():
-        message_ids = chats.pop(chat_id, [])
-        for message_id in message_ids:
-            try:
-                await bot.delete_message(chat_id=chat_id, message_id=message_id)
-            except TelegramBadRequest:
-                continue
-        if not chats:
-            empty_ad_ids.append(ad_id)
-
-    for ad_id in empty_ad_ids:
-        ctx.user_messages.pop(ad_id, None)
+    for saved_message in ctx.db.ad_messages_for_chat(chat_id):
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=saved_message.message_id)
+        except TelegramBadRequest:
+            continue
+    ctx.db.delete_ad_messages_for_chat(chat_id)
 
 
 def is_forwarded(message: Message) -> bool:

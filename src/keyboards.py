@@ -52,8 +52,24 @@ def photo_menu() -> ReplyKeyboardMarkup:
     )
 
 
-def ad_keyboard(ad_id: int, is_author: bool, is_reserved: bool) -> InlineKeyboardMarkup:
+def ad_keyboard(
+    ad_id: int,
+    is_author: bool,
+    is_reserved: bool,
+    photo_count: int = 0,
+    photo_index: int = 0,
+) -> InlineKeyboardMarkup:
     buttons: list[list[InlineKeyboardButton]] = []
+    if photo_count > 1:
+        prev_index = (photo_index - 1) % photo_count
+        next_index = (photo_index + 1) % photo_count
+        buttons.append(
+            [
+                InlineKeyboardButton(text="<-", callback_data=f"photo:{ad_id}:{prev_index}"),
+                InlineKeyboardButton(text=f"{photo_index + 1}/{photo_count}", callback_data=f"photo_noop:{ad_id}"),
+                InlineKeyboardButton(text="->", callback_data=f"photo:{ad_id}:{next_index}"),
+            ]
+        )
     if is_author:
         if is_reserved:
             buttons.append([InlineKeyboardButton(text="Снять бронь", callback_data=f"reserve_release:{ad_id}")])

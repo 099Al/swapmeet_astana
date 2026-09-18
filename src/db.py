@@ -23,6 +23,15 @@ class Ad:
     reserved_by: int | None
 
 
+@dataclass(frozen=True)
+class AdMessage:
+    ad_id: int
+    chat_id: int
+    message_id: int
+    message_kind: str
+    photo_index: int
+
+
 class Database:
     def __init__(self, path: str) -> None:
         self.path = path
@@ -87,12 +96,27 @@ class Database:
                     remove_reason TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS ad_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ad_id INTEGER NOT NULL,
+                    chat_id INTEGER NOT NULL,
+                    message_id INTEGER NOT NULL,
+                    message_kind TEXT NOT NULL CHECK(message_kind IN ('photo', 'text')),
+                    photo_index INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(ad_id, chat_id, message_id)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_market_active_created
                     ON market(status, created_at);
                 CREATE INDEX IF NOT EXISTS idx_market_user_created
                     ON market(user_id, created_at);
                 CREATE INDEX IF NOT EXISTS idx_market_photos_ad
                     ON market_photos(ad_id);
+                CREATE INDEX IF NOT EXISTS idx_ad_messages_ad
+                    ON ad_messages(ad_id);
+                CREATE INDEX IF NOT EXISTS idx_ad_messages_chat
+                    ON ad_messages(chat_id);
                 """
             )
 
@@ -128,6 +152,7 @@ class Database:
                     ),
                 )
             conn.execute("DELETE FROM market_photos WHERE ad_id IN (SELECT id FROM market WHERE created_at < ?)", (cutoff.isoformat(),))
+            conn.execute("DELETE FROM ad_messages WHERE ad_id IN (SELECT id FROM market WHERE created_at < ?)", (cutoff.isoformat(),))
             conn.execute("DELETE FROM market WHERE created_at < ?", (cutoff.isoformat(),))
 
     def active_ads(self, retention_days: int, category: str | None = None) -> list[Ad]:
@@ -151,6 +176,72 @@ class Database:
         with self.connect() as conn:
             rows = conn.execute("SELECT file_id FROM market_photos WHERE ad_id = ? ORDER BY id", (ad_id,)).fetchall()
         return [row["file_id"] for row in rows]
+
+    def save_ad_message(
+        self,
+        *,
+        ad_id: int,
+        chat_id: int,
+        message_id: int,
+        message_kind: str,
+        photo_index: int = 0,
+    ) -> None:
+        now = datetime.now().isoformat(timespec="seconds")
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO ad_messages (
+                    ad_id, chat_id, message_id, message_kind, photo_index, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (ad_id, chat_id, message_id, message_kind, photo_index, now),
+            )
+
+    def ad_messages(self, ad_id: int) -> list[AdMessage]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT ad_id, chat_id, message_id, message_kind, photo_index
+                FROM ad_messages
+                WHERE ad_id = ?
+                ORDER BY id
+                """,
+                (ad_id,),
+            ).fetchall()
+        return [_ad_message_from_row(row) for row in rows]
+
+    def ad_messages_for_chat(self, chat_id: int) -> list[AdMessage]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT ad_id, chat_id, message_id, message_kind, photo_index
+                FROM ad_messages
+                WHERE chat_id = ?
+                ORDER BY id
+                """,
+                (chat_id,),
+            ).fetchall()
+        return [_ad_message_from_row(row) for row in rows]
+
+    def update_ad_message_photo_index(self, ad_id: int, chat_id: int, message_id: int, photo_index: int) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE ad_messages
+                SET photo_index = ?
+                WHERE ad_id = ? AND chat_id = ? AND message_id = ?
+                """,
+                (photo_index, ad_id, chat_id, message_id),
+            )
+
+    def delete_ad_messages_for_ad(self, ad_id: int) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM ad_messages WHERE ad_id = ?", (ad_id,))
+
+    def delete_ad_messages_for_chat(self, chat_id: int) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM ad_messages WHERE chat_id = ?", (chat_id,))
 
     def count_user_ads_today(self, user_id: int, ad_type: str | None = None) -> int:
         start = _start_of_day(datetime.now()).isoformat()
@@ -300,6 +391,16 @@ def _ad_from_row(row: sqlite3.Row) -> Ad:
         created_at=str(row["created_at"]),
         deleted_at=row["deleted_at"],
         reserved_by=row["reserved_by"],
+    )
+
+
+def _ad_message_from_row(row: sqlite3.Row) -> AdMessage:
+    return AdMessage(
+        ad_id=int(row["ad_id"]),
+        chat_id=int(row["chat_id"]),
+        message_id=int(row["message_id"]),
+        message_kind=str(row["message_kind"]),
+        photo_index=int(row["photo_index"]),
     )
 
 
