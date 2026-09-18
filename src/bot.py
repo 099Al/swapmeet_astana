@@ -655,7 +655,7 @@ async def show_one_ad(message: Message, ctx: AppContext, ad: Ad | None, reply_ma
 def render_ad(ad: Ad) -> str:
     kind = "Куплю" if ad.ad_type == "buy" else "Продам"
     parts = [
-        f"#{public_ad_number(ad.id):06d}",
+        f"#{format_public_ad_number(ad.id)}",
         hbold(kind),
         f"Категория: {ad.category}",
         "",
@@ -737,6 +737,10 @@ def has_duplicate_in_batch(hashes: list[str], max_distance: int = 8) -> bool:
 
 def public_ad_number(ad_id: int) -> int:
     return ad_id + PUBLIC_NUMBER_OFFSET
+
+
+def format_public_ad_number(ad_id: int) -> str:
+    return f"{public_ad_number(ad_id):,}".replace(",", " ")
 
 
 def ad_from_number_text(ctx: AppContext, text: str) -> Ad | None:
