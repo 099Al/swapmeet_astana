@@ -481,6 +481,7 @@ def build_router(ctx: AppContext) -> Router:
         ctx.db.mark_deleted(ad_id, reason)
         await delete_known_messages(callback.bot, ctx, ad_id)
         await callback.message.delete()
+        await callback.message.answer("Объявление снято.", reply_markup=main_menu())
         await callback.answer("Объявление снято")
 
     @router.message(F.reply_to_message)

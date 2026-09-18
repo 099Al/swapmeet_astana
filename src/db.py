@@ -399,10 +399,17 @@ class Database:
         return ad_id
 
     def mark_deleted(self, ad_id: int, reason: str) -> None:
-        removed_at = datetime.now().isoformat(timespec="seconds")
+        removed_at_dt = datetime.now()
+        removed_at = removed_at_dt.isoformat(timespec="seconds")
         with self.connect() as conn:
             row = conn.execute("SELECT * FROM market WHERE id = ?", (ad_id,)).fetchone()
             if row is None or row["status"] == "deleted":
+                return
+            created_at = datetime.fromisoformat(row["created_at"])
+            if removed_at_dt - created_at < timedelta(hours=1):
+                conn.execute("DELETE FROM market_photos WHERE ad_id = ?", (ad_id,))
+                conn.execute("DELETE FROM ad_messages WHERE ad_id = ?", (ad_id,))
+                conn.execute("DELETE FROM market WHERE id = ?", (ad_id,))
                 return
             conn.execute(
                 """
