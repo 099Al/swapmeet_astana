@@ -22,7 +22,6 @@ from keyboards import (
     BTN_BUY,
     BTN_CATEGORIES,
     BTN_CREATE,
-    BTN_DONE,
     BTN_RELEASE_RESERVE,
     BTN_REMOVE_AD,
     BTN_RESERVE,
@@ -32,10 +31,8 @@ from keyboards import (
     CATEGORY_ALL,
     categories_menu,
     create_inline_menu,
-    create_menu,
     inline_categories_menu,
     main_menu,
-    photo_menu,
     remove_reason_keyboard,
     sell_categories_inline_menu,
     sell_confirm_keyboard,
@@ -143,7 +140,7 @@ def build_router(ctx: AppContext) -> Router:
             callback.message,
             state,
             f"Отправьте фото(не более {MAX_SELL_PHOTOS})",
-            reply_markup=sell_photo_inline_menu(),
+            reply_markup=sell_photo_inline_menu(has_photos=False),
         )
         await callback.answer()
 
@@ -185,7 +182,7 @@ def build_router(ctx: AppContext) -> Router:
             message,
             state,
             f"Отправьте фото(не более {MAX_SELL_PHOTOS})",
-            reply_markup=sell_photo_inline_menu(),
+            reply_markup=sell_photo_inline_menu(has_photos=False),
         )
 
     @router.message(CreateAd.sell_description)
@@ -254,25 +251,25 @@ def build_router(ctx: AppContext) -> Router:
         data = await state.get_data()
         photos: list[tuple[str, str, str]] = data.get("photos", [])
         if len(photos) >= MAX_SELL_PHOTOS:
-            await message.answer(f"Можно добавить не больше {MAX_SELL_PHOTOS} фото.")
+            await ask_sell_category(message, state)
             return
         photos.append((photo.file_id, photo.file_unique_id, image_hash))
         await remember_wizard_user_message(state, message.message_id)
         await state.update_data(photos=photos)
+        if len(photos) >= MAX_SELL_PHOTOS:
+            await ask_sell_category(message, state)
+            return
         await send_wizard_message(
             message,
             state,
-            f"Фото добавлено: {len(photos)}/{MAX_SELL_PHOTOS}.",
-            reply_markup=sell_photo_inline_menu(),
+            f"Добавить еще фото({len(photos)}/{MAX_SELL_PHOTOS})",
+            reply_markup=sell_photo_inline_menu(has_photos=True),
         )
 
-    @router.message(CreateAd.sell_photos, F.text.in_((BTN_DONE, BTN_SKIP_PHOTOS)))
+    @router.message(CreateAd.sell_photos, F.text == BTN_SKIP_PHOTOS)
     async def finish_sell_photos(message: Message, state: FSMContext) -> None:
         data = await state.get_data()
         photos: list[tuple[str, str, str]] = data.get("photos", [])
-        if message.text == BTN_DONE and not photos:
-            await message.answer("Добавьте хотя бы одно фото или нажмите «Без фото».")
-            return
         if has_duplicate_in_batch([item[2] for item in photos]):
             await state.clear()
             await message.answer(
@@ -300,12 +297,12 @@ def build_router(ctx: AppContext) -> Router:
         action = callback.data.split(":", 1)[1]
         data = await state.get_data()
         photos: list[tuple[str, str, str]] = data.get("photos", [])
-        if action == "done" and not photos:
-            await callback.answer("Добавьте фото или нажмите «Без фото».", show_alert=True)
-            return
         if action == "skip":
             photos = []
             await state.update_data(photos=photos)
+        if action == "description" and not photos:
+            await callback.answer("Сначала добавьте фото или нажмите «Без фото».", show_alert=True)
+            return
         if has_duplicate_in_batch([item[2] for item in photos]):
             await reset_sell_wizard(callback.bot, callback.message.chat.id, state)
             await callback.message.answer(
@@ -349,7 +346,7 @@ def build_router(ctx: AppContext) -> Router:
                 callback.message,
                 state,
                 f"Отправьте фото(не более {MAX_SELL_PHOTOS})",
-                reply_markup=sell_photo_inline_menu(),
+                reply_markup=sell_photo_inline_menu(has_photos=bool(data.get("photos", []))),
             )
         elif target == "description":
             category = data.get("category", "Другое")

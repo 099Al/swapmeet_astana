@@ -15,7 +15,6 @@ BTN_CREATE = "Подать объявление"
 BTN_BACK = "Назад"
 BTN_SELL = "Продать"
 BTN_BUY = "Купить"
-BTN_DONE = "Готово"
 BTN_SKIP_PHOTOS = "Без фото"
 BTN_RESERVE = "Забронировать"
 BTN_RELEASE_RESERVE = "Снять Бронь"
@@ -58,13 +57,13 @@ def create_inline_menu() -> InlineKeyboardMarkup:
     )
 
 
-def sell_photo_inline_menu() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=BTN_DONE, callback_data="sell_photos:done")],
-            [InlineKeyboardButton(text=BTN_SKIP_PHOTOS, callback_data="sell_photos:skip")],
-        ]
-    )
+def sell_photo_inline_menu(has_photos: bool = False) -> InlineKeyboardMarkup:
+    rows = []
+    if has_photos:
+        rows.append([InlineKeyboardButton(text="Добавить описание", callback_data="sell_photos:description")])
+    else:
+        rows.append([InlineKeyboardButton(text=BTN_SKIP_PHOTOS, callback_data="sell_photos:skip")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def sell_categories_inline_menu() -> InlineKeyboardMarkup:
@@ -89,20 +88,6 @@ def sell_confirm_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="Подтвердить", callback_data="sell_confirm:yes")],
             [InlineKeyboardButton(text="Сбросить", callback_data="sell_confirm:reset")],
         ]
-    )
-
-
-def create_menu() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=BTN_SELL), KeyboardButton(text=BTN_BUY)], [KeyboardButton(text=BTN_BACK)]],
-        resize_keyboard=True,
-    )
-
-
-def photo_menu() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=BTN_DONE), KeyboardButton(text=BTN_SKIP_PHOTOS)], [KeyboardButton(text=BTN_BACK)]],
-        resize_keyboard=True,
     )
 
 
