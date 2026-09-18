@@ -23,13 +23,14 @@ from keyboards import (
     BTN_CATEGORIES,
     BTN_CREATE,
     BTN_DONE,
+    BTN_RELEASE_RESERVE,
+    BTN_REMOVE_AD,
+    BTN_RESERVE,
     BTN_SELL,
     BTN_SKIP_PHOTOS,
     CATEGORIES,
     CATEGORY_ALL,
-    ad_keyboard,
     categories_menu,
-    confirm_reserve_keyboard,
     create_menu,
     main_menu,
     photo_menu,
@@ -37,7 +38,8 @@ from keyboards import (
 )
 
 MAX_BUY_DESCRIPTION = 500
-MAX_SELL_PHOTOS = 5
+MAX_SELL_PHOTOS = 6
+PUBLIC_NUMBER_OFFSET = 99999
 
 
 class CreateAd(StatesGroup):
@@ -48,6 +50,9 @@ class CreateAd(StatesGroup):
     sell_price = State()
     sell_address = State()
     sell_photos = State()
+    reserve_number = State()
+    release_reserve_number = State()
+    remove_ad_number = State()
 
 
 @dataclass
@@ -257,77 +262,56 @@ def build_router(ctx: AppContext) -> Router:
         await state.set_state(CreateAd.sell_category)
         await message.answer("Укажите категорию:", reply_markup=categories_menu(include_all=False))
 
-    @router.callback_query(F.data.startswith("photo:"))
-    async def switch_photo(callback: CallbackQuery) -> None:
-        _, ad_id_text, index_text = callback.data.split(":", 2)
-        ad_id = int(ad_id_text)
-        photo_index = int(index_text)
-        ad = ctx.db.get_ad(ad_id)
-        photos = ctx.db.ad_photos(ad_id)
-        if ad is None or ad.status != "active" or not photos:
-            await callback.answer("Объявление недоступно", show_alert=True)
+    @router.message(F.text == BTN_RESERVE)
+    async def reserve_by_number_start(message: Message, state: FSMContext) -> None:
+        await state.set_state(CreateAd.reserve_number)
+        await message.answer("Введите номер объявления.")
+
+    @router.message(F.text == BTN_RELEASE_RESERVE)
+    async def release_by_number_start(message: Message, state: FSMContext) -> None:
+        await state.set_state(CreateAd.release_reserve_number)
+        await message.answer("Введите номер объявления.")
+
+    @router.message(F.text == BTN_REMOVE_AD)
+    async def remove_by_number_start(message: Message, state: FSMContext) -> None:
+        await state.set_state(CreateAd.remove_ad_number)
+        await message.answer("Введите номер объявления.")
+
+    @router.message(CreateAd.reserve_number)
+    async def reserve_by_number(message: Message, state: FSMContext) -> None:
+        ad = ad_from_number_text(ctx, message.text or "")
+        await state.clear()
+        if ad is None:
+            await message.answer("Объявление с таким номером не найдено.", reply_markup=main_menu())
             return
-        photo_index %= len(photos)
-        keyboard = ad_keyboard(
-            ad.id,
-            is_author=callback.from_user.id == ad.user_id,
-            is_reserved=ad.reserved_by is not None,
-            photo_count=len(photos),
-            photo_index=photo_index,
-        )
-        await callback.message.edit_media(
-            InputMediaPhoto(media=photos[photo_index], caption=render_ad(ad), parse_mode=ParseMode.HTML),
-            reply_markup=keyboard,
-        )
-        ctx.db.update_ad_message_photo_index(ad_id, callback.message.chat.id, callback.message.message_id, photo_index)
-        await callback.answer()
+        await reserve_ad(message, ctx, ad)
 
-    @router.callback_query(F.data.startswith("photo_noop:"))
-    async def photo_noop(callback: CallbackQuery) -> None:
-        await callback.answer()
+    @router.message(CreateAd.release_reserve_number)
+    async def release_by_number(message: Message, state: FSMContext) -> None:
+        ad = ad_from_number_text(ctx, message.text or "")
+        await state.clear()
+        if ad is None:
+            await message.answer("Объявление с таким номером не найдено.", reply_markup=main_menu())
+            return
+        await release_reserve_ad(message, ctx, ad)
 
-    @router.callback_query(F.data.startswith("reserve_start:"))
-    async def reserve_start(callback: CallbackQuery) -> None:
-        ad_id = int(callback.data.split(":", 1)[1])
-        await callback.message.answer("Подтвердить бронь:", reply_markup=confirm_reserve_keyboard(ad_id))
-        await callback.answer()
-
-    @router.callback_query(F.data.startswith("reserve_no:"))
-    async def reserve_no(callback: CallbackQuery) -> None:
-        await callback.message.delete()
-        await callback.answer("Отменено")
-
-    @router.callback_query(F.data.startswith("reserve_yes:"))
-    async def reserve_yes(callback: CallbackQuery) -> None:
-        ad_id = int(callback.data.split(":", 1)[1])
-        ad = ctx.db.get_ad(ad_id)
+    @router.message(CreateAd.remove_ad_number)
+    async def remove_by_number(message: Message, state: FSMContext) -> None:
+        ad = ad_from_number_text(ctx, message.text or "")
+        await state.clear()
         if ad is None or ad.status != "active":
-            await callback.answer("Объявление уже недоступно", show_alert=True)
+            await message.answer("Объявление с таким номером не найдено.", reply_markup=main_menu())
             return
-        if ad.reserved_by is not None:
-            await callback.answer("Объявление уже в броне", show_alert=True)
+        if not can_remove_ad(ctx, message.from_user.id, ad):
+            await message.answer("Снять объявление может только автор или админ.", reply_markup=main_menu())
             return
-        if ctx.db.reserve(ad_id, callback.from_user.id):
-            await callback.answer("Забронировано")
-            await refresh_known_messages(callback.bot, ctx, ad_id)
-            await callback.message.delete()
-        else:
-            await callback.answer("Объявление уже в броне", show_alert=True)
-
-    @router.callback_query(F.data.startswith("reserve_release:"))
-    async def reserve_release(callback: CallbackQuery) -> None:
-        ad_id = int(callback.data.split(":", 1)[1])
-        if ctx.db.release_reserve(ad_id, callback.from_user.id):
-            await callback.answer("Бронь снята")
-            await refresh_known_messages(callback.bot, ctx, ad_id)
-        else:
-            await callback.answer("Не удалось снять бронь", show_alert=True)
+        await message.answer("Укажите причину:", reply_markup=remove_reason_keyboard(ad.id, ad.ad_type))
 
     @router.callback_query(F.data.startswith("remove_start:"))
     async def remove_start(callback: CallbackQuery) -> None:
         ad_id = int(callback.data.split(":", 1)[1])
         ad = ctx.db.get_ad(ad_id)
-        if ad is None or ad.user_id != callback.from_user.id:
+        if ad is None or not can_remove_ad(ctx, callback.from_user.id, ad):
             await callback.answer("Это действие доступно только автору", show_alert=True)
             return
         await callback.message.answer("Укажите причину:", reply_markup=remove_reason_keyboard(ad_id, ad.ad_type))
@@ -338,13 +322,36 @@ def build_router(ctx: AppContext) -> Router:
         _, ad_id_text, reason = callback.data.split(":", 2)
         ad_id = int(ad_id_text)
         ad = ctx.db.get_ad(ad_id)
-        if ad is None or ad.user_id != callback.from_user.id:
+        if ad is None or not can_remove_ad(ctx, callback.from_user.id, ad):
             await callback.answer("Это действие доступно только автору", show_alert=True)
             return
         ctx.db.mark_deleted(ad_id, reason)
         await delete_known_messages(callback.bot, ctx, ad_id)
         await callback.message.delete()
         await callback.answer("Объявление снято")
+
+    @router.message(F.reply_to_message)
+    async def reply_command(message: Message) -> None:
+        saved_message = ctx.db.ad_message_by_message_id(message.chat.id, message.reply_to_message.message_id)
+        if saved_message is None:
+            return
+        ad = ctx.db.get_ad(saved_message.ad_id)
+        if ad is None or ad.status != "active":
+            await safe_delete(message)
+            return
+
+        command = normalize_command(message.text or "")
+        if command in {"бронь", "забронировать"}:
+            await reserve_ad(message, ctx, ad, delete_command_message=True)
+            return
+        if command in {"удалить", "снять", "снятьобъявление"}:
+            if not can_remove_ad(ctx, message.from_user.id, ad):
+                await message.answer("Удалить объявление может только автор или админ.")
+                await safe_delete(message)
+                return
+            await message.answer("Укажите причину:", reply_markup=remove_reason_keyboard(ad.id, ad.ad_type))
+            await safe_delete(message)
+            return
 
     @router.message()
     async def fallback(message: Message) -> None:
@@ -392,20 +399,22 @@ async def show_one_ad(message: Message, ctx: AppContext, ad: Ad | None) -> None:
         return
     photos = ctx.db.ad_photos(ad.id)
     text = render_ad(ad)
-    keyboard = ad_keyboard(
-        ad.id,
-        is_author=message.from_user.id == ad.user_id,
-        is_reserved=ad.reserved_by is not None,
-        photo_count=len(photos),
-        photo_index=0,
-    )
-    if photos:
-        sent = await message.answer_photo(
-            photos[0],
-            caption=text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=keyboard,
-        )
+    if len(photos) > 1:
+        media = [
+            InputMediaPhoto(media=file_id, caption=text if index == 0 else None, parse_mode=ParseMode.HTML)
+            for index, file_id in enumerate(photos[:MAX_SELL_PHOTOS])
+        ]
+        sent_messages = await message.answer_media_group(media)
+        for index, sent_message in enumerate(sent_messages):
+            ctx.db.save_ad_message(
+                ad_id=ad.id,
+                chat_id=message.chat.id,
+                message_id=sent_message.message_id,
+                message_kind="photo",
+                photo_index=index,
+            )
+    elif len(photos) == 1:
+        sent = await message.answer_photo(photos[0], caption=text, parse_mode=ParseMode.HTML)
         ctx.db.save_ad_message(
             ad_id=ad.id,
             chat_id=message.chat.id,
@@ -414,7 +423,7 @@ async def show_one_ad(message: Message, ctx: AppContext, ad: Ad | None) -> None:
             photo_index=0,
         )
     else:
-        sent = await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+        sent = await message.answer(text, parse_mode=ParseMode.HTML)
         ctx.db.save_ad_message(
             ad_id=ad.id,
             chat_id=message.chat.id,
@@ -426,7 +435,8 @@ async def show_one_ad(message: Message, ctx: AppContext, ad: Ad | None) -> None:
 def render_ad(ad: Ad) -> str:
     kind = "Куплю" if ad.ad_type == "buy" else "Продам"
     parts = [
-        f"{hbold(kind)} #{ad.id}",
+        f"#{public_ad_number(ad.id):06d}",
+        hbold(kind),
         f"Категория: {ad.category}",
         "",
         ad.description,
@@ -437,7 +447,7 @@ def render_ad(ad: Ad) -> str:
         parts.append(f"Адрес: {ad.address}")
     if ad.reserved_by is not None:
         parts.append("")
-        parts.append(hbold("! Забронировано"))
+        parts.append(hbold("Забронировано"))
     return "\n".join(parts)
 
 
@@ -445,35 +455,21 @@ async def refresh_known_messages(bot: Bot, ctx: AppContext, ad_id: int) -> None:
     ad = ctx.db.get_ad(ad_id)
     if ad is None:
         return
-    photos = ctx.db.ad_photos(ad_id)
     for saved_message in ctx.db.ad_messages(ad_id):
-        photo_index = saved_message.photo_index % len(photos) if photos else 0
-        keyboard = ad_keyboard(
-            ad.id,
-            is_author=saved_message.chat_id == ad.user_id,
-            is_reserved=ad.reserved_by is not None,
-            photo_count=len(photos),
-            photo_index=photo_index,
-        )
         try:
-            if saved_message.message_kind == "photo" and photos:
-                await bot.edit_message_media(
+            if saved_message.message_kind == "photo" and saved_message.photo_index == 0:
+                await bot.edit_message_caption(
                     chat_id=saved_message.chat_id,
                     message_id=saved_message.message_id,
-                    media=InputMediaPhoto(
-                        media=photos[photo_index],
-                        caption=render_ad(ad),
-                        parse_mode=ParseMode.HTML,
-                    ),
-                    reply_markup=keyboard,
+                    caption=render_ad(ad),
+                    parse_mode=ParseMode.HTML,
                 )
-            else:
+            elif saved_message.message_kind == "text":
                 await bot.edit_message_text(
                     chat_id=saved_message.chat_id,
                     message_id=saved_message.message_id,
                     text=render_ad(ad),
                     parse_mode=ParseMode.HTML,
-                    reply_markup=keyboard,
                 )
         except TelegramBadRequest:
             continue
@@ -509,11 +505,77 @@ def has_duplicate_in_batch(hashes: list[str], max_distance: int = 8) -> bool:
     return False
 
 
+def public_ad_number(ad_id: int) -> int:
+    return ad_id + PUBLIC_NUMBER_OFFSET
+
+
+def ad_from_number_text(ctx: AppContext, text: str) -> Ad | None:
+    digits = "".join(ch for ch in text if ch.isdigit())
+    if not digits:
+        return None
+    return ctx.db.get_ad_by_public_number(int(digits))
+
+
+def normalize_command(text: str) -> str:
+    return "".join(ch.lower() for ch in text if ch.isalpha())
+
+
+def can_remove_ad(ctx: AppContext, user_id: int, ad: Ad) -> bool:
+    return ad.user_id == user_id or ctx.db.is_admin(user_id)
+
+
+async def reserve_ad(message: Message, ctx: AppContext, ad: Ad, delete_command_message: bool = False) -> None:
+    if ad.status != "active":
+        if not delete_command_message:
+            await message.answer("Объявление уже недоступно.", reply_markup=main_menu())
+        if delete_command_message:
+            await safe_delete(message)
+        return
+    if ad.reserved_by is not None:
+        if not delete_command_message:
+            await message.answer("Объявление уже забронировано.", reply_markup=main_menu())
+        if delete_command_message:
+            await safe_delete(message)
+        return
+    if ctx.db.reserve(ad.id, message.from_user.id):
+        await refresh_known_messages(message.bot, ctx, ad.id)
+        if not delete_command_message:
+            await message.answer("Объявление забронировано.", reply_markup=main_menu())
+    else:
+        if not delete_command_message:
+            await message.answer("Объявление уже забронировано.", reply_markup=main_menu())
+    if delete_command_message:
+        await safe_delete(message)
+
+
+async def release_reserve_ad(message: Message, ctx: AppContext, ad: Ad) -> None:
+    if ad.reserved_by is None:
+        await message.answer("У объявления нет брони.", reply_markup=main_menu())
+        return
+    if ad.user_id != message.from_user.id and ad.reserved_by != message.from_user.id:
+        await message.answer("Снять бронь может автор брони или автор объявления.", reply_markup=main_menu())
+        return
+    if ctx.db.release_reserve(ad.id, message.from_user.id):
+        await refresh_known_messages(message.bot, ctx, ad.id)
+        await message.answer("Бронь снята.", reply_markup=main_menu())
+    else:
+        await message.answer("Не удалось снять бронь.", reply_markup=main_menu())
+
+
+async def safe_delete(message: Message) -> None:
+    try:
+        await message.delete()
+    except TelegramBadRequest:
+        return
+
+
 async def run() -> None:
     logging.basicConfig(level=logging.INFO)
     settings = load_settings()
     db = Database(settings.database_path)
     db.init()
+    for admin_id in settings.admin_ids:
+        db.upsert_admin(admin_id)
     db.cleanup_old_ads(settings.retention_period_days)
 
     bot = Bot(settings.bot_token)

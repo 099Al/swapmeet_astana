@@ -15,6 +15,7 @@ class Settings:
     user_daily_ad_limit: int = 10
     duplicate_photo_days: int = 7
     retention_period_days: int = 7
+    admin_ids: tuple[int, ...] = ()
 
 
 def _get_int(name: str, default: int) -> int:
@@ -39,6 +40,7 @@ def load_settings() -> Settings:
         user_daily_ad_limit=_get_int("USER_DAILY_AD_LIMIT", 10),
         duplicate_photo_days=_get_int("DUPLICATE_PHOTO_DAYS", 7),
         retention_period_days=_get_int("RETENTION_PERIOD_DAYS", 7),
+        admin_ids=_get_int_list("ADMIN_IDS"),
     )
 
 
@@ -48,3 +50,10 @@ def _resolve_database_path(value: str, env_path: str) -> str:
         return str(path)
     base_dir = Path(env_path).parent if env_path else Path.cwd()
     return str(base_dir / path)
+
+
+def _get_int_list(name: str) -> tuple[int, ...]:
+    value = os.getenv(name, "").strip()
+    if not value:
+        return ()
+    return tuple(int(item.strip()) for item in value.split(",") if item.strip())

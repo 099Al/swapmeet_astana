@@ -17,12 +17,17 @@ BTN_SELL = "Продать"
 BTN_BUY = "Купить"
 BTN_DONE = "Готово"
 BTN_SKIP_PHOTOS = "Без фото"
+BTN_RESERVE = "Забронировать"
+BTN_RELEASE_RESERVE = "Снять Бронь"
+BTN_REMOVE_AD = "Снять объявление"
 
 
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_CATEGORIES), KeyboardButton(text=BTN_CREATE)],
+            [KeyboardButton(text=BTN_RESERVE), KeyboardButton(text=BTN_RELEASE_RESERVE)],
+            [KeyboardButton(text=BTN_REMOVE_AD)],
         ],
         resize_keyboard=True,
     )
@@ -49,44 +54,6 @@ def photo_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=BTN_DONE), KeyboardButton(text=BTN_SKIP_PHOTOS)], [KeyboardButton(text=BTN_BACK)]],
         resize_keyboard=True,
-    )
-
-
-def ad_keyboard(
-    ad_id: int,
-    is_author: bool,
-    is_reserved: bool,
-    photo_count: int = 0,
-    photo_index: int = 0,
-) -> InlineKeyboardMarkup:
-    buttons: list[list[InlineKeyboardButton]] = []
-    if photo_count > 1:
-        prev_index = (photo_index - 1) % photo_count
-        next_index = (photo_index + 1) % photo_count
-        buttons.append(
-            [
-                InlineKeyboardButton(text="<-", callback_data=f"photo:{ad_id}:{prev_index}"),
-                InlineKeyboardButton(text=f"{photo_index + 1}/{photo_count}", callback_data=f"photo_noop:{ad_id}"),
-                InlineKeyboardButton(text="->", callback_data=f"photo:{ad_id}:{next_index}"),
-            ]
-        )
-    if is_author:
-        if is_reserved:
-            buttons.append([InlineKeyboardButton(text="Снять бронь", callback_data=f"reserve_release:{ad_id}")])
-        buttons.append([InlineKeyboardButton(text="Удалить", callback_data=f"remove_start:{ad_id}")])
-    else:
-        buttons.append([InlineKeyboardButton(text="Бронь", callback_data=f"reserve_start:{ad_id}")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def confirm_reserve_keyboard(ad_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Да", callback_data=f"reserve_yes:{ad_id}"),
-                InlineKeyboardButton(text="Нет", callback_data=f"reserve_no:{ad_id}"),
-            ]
-        ]
     )
 
 

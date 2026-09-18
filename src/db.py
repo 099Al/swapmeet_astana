@@ -107,6 +107,12 @@ class Database:
                     UNIQUE(ad_id, chat_id, message_id)
                 );
 
+                CREATE TABLE IF NOT EXISTS admins (
+                    user_id INTEGER PRIMARY KEY,
+                    username TEXT,
+                    created_at TEXT NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_market_active_created
                     ON market(status, created_at);
                 CREATE INDEX IF NOT EXISTS idx_market_user_created
@@ -172,6 +178,12 @@ class Database:
             row = conn.execute("SELECT * FROM market WHERE id = ?", (ad_id,)).fetchone()
         return _ad_from_row(row) if row else None
 
+    def get_ad_by_public_number(self, public_number: int) -> Ad | None:
+        ad_id = public_number - 99999
+        if ad_id < 1:
+            return None
+        return self.get_ad(ad_id)
+
     def ad_photos(self, ad_id: int) -> list[str]:
         with self.connect() as conn:
             rows = conn.execute("SELECT file_id FROM market_photos WHERE ad_id = ? ORDER BY id", (ad_id,)).fetchall()
@@ -224,6 +236,18 @@ class Database:
             ).fetchall()
         return [_ad_message_from_row(row) for row in rows]
 
+    def ad_message_by_message_id(self, chat_id: int, message_id: int) -> AdMessage | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT ad_id, chat_id, message_id, message_kind, photo_index
+                FROM ad_messages
+                WHERE chat_id = ? AND message_id = ?
+                """,
+                (chat_id, message_id),
+            ).fetchone()
+        return _ad_message_from_row(row) if row else None
+
     def update_ad_message_photo_index(self, ad_id: int, chat_id: int, message_id: int, photo_index: int) -> None:
         with self.connect() as conn:
             conn.execute(
@@ -242,6 +266,23 @@ class Database:
     def delete_ad_messages_for_chat(self, chat_id: int) -> None:
         with self.connect() as conn:
             conn.execute("DELETE FROM ad_messages WHERE chat_id = ?", (chat_id,))
+
+    def upsert_admin(self, user_id: int, username: str | None = None) -> None:
+        now = datetime.now().isoformat(timespec="seconds")
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO admins (user_id, username, created_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET username = excluded.username
+                """,
+                (user_id, username, now),
+            )
+
+    def is_admin(self, user_id: int) -> bool:
+        with self.connect() as conn:
+            row = conn.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,)).fetchone()
+        return row is not None
 
     def count_user_ads_today(self, user_id: int, ad_type: str | None = None) -> int:
         start = _start_of_day(datetime.now()).isoformat()
