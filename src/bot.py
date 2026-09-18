@@ -31,11 +31,16 @@ from keyboards import (
     CATEGORIES,
     CATEGORY_ALL,
     categories_menu,
+    create_inline_menu,
     create_menu,
     inline_categories_menu,
     main_menu,
     photo_menu,
     remove_reason_keyboard,
+    sell_categories_inline_menu,
+    sell_confirm_keyboard,
+    sell_photo_inline_menu,
+    wizard_back_keyboard,
 )
 
 MAX_BUY_DESCRIPTION = 500
@@ -51,6 +56,7 @@ class CreateAd(StatesGroup):
     sell_price = State()
     sell_address = State()
     sell_photos = State()
+    sell_confirm = State()
     reserve_number = State()
     release_reserve_number = State()
     remove_ad_number = State()
@@ -99,9 +105,8 @@ def build_router(ctx: AppContext) -> Router:
                 await message.answer("Выберите категорию из меню.")
                 return
             await state.update_data(category=message.text)
-            extra = " Не забудьте указать размер." if message.text == "Одежда" else ""
             await state.set_state(CreateAd.sell_description)
-            await message.answer(f"Опишите объявление.{extra}", reply_markup=main_menu())
+            await ask_sell_description(message, state, message.text)
             return
 
         category = None if message.text == CATEGORY_ALL else message.text
@@ -111,7 +116,36 @@ def build_router(ctx: AppContext) -> Router:
 
     @router.message(F.text == BTN_CREATE)
     async def create(message: Message) -> None:
-        await message.answer("Что хотите сделать?", reply_markup=create_menu())
+        await message.answer("Что хотите сделать?", reply_markup=create_inline_menu())
+
+    @router.callback_query(F.data == "create:buy")
+    async def buy_start_inline(callback: CallbackQuery, state: FSMContext) -> None:
+        if await is_daily_limit_exceeded_callback(callback, ctx, ad_type="buy", limit=ctx.settings.buy_daily_limit):
+            await callback.answer("Превышен суточный лимит объявлений на покупку.", show_alert=True)
+            return
+        if await is_daily_limit_exceeded_callback(callback, ctx, ad_type=None, limit=ctx.settings.user_daily_ad_limit):
+            await callback.answer("Превышен суточный лимит объявлений.", show_alert=True)
+            return
+        await state.set_state(CreateAd.buy_description)
+        await safe_delete(callback.message)
+        await callback.message.answer("Опишите, что вы хотите купить, принять даром, обменять")
+        await callback.answer()
+
+    @router.callback_query(F.data == "create:sell")
+    async def sell_start_inline(callback: CallbackQuery, state: FSMContext) -> None:
+        if await is_daily_limit_exceeded_callback(callback, ctx, ad_type=None, limit=ctx.settings.user_daily_ad_limit):
+            await callback.answer("Превышен суточный лимит объявлений.", show_alert=True)
+            return
+        await state.set_state(CreateAd.sell_photos)
+        await state.set_data({"photos": [], "wizard_message_ids": [], "wizard_user_message_ids": []})
+        await safe_delete(callback.message)
+        await send_wizard_message(
+            callback.message,
+            state,
+            f"Отправьте фото(не более {MAX_SELL_PHOTOS})",
+            reply_markup=sell_photo_inline_menu(),
+        )
+        await callback.answer()
 
     @router.message(F.text == BTN_BUY)
     async def buy_start(message: Message, state: FSMContext) -> None:
@@ -145,11 +179,13 @@ def build_router(ctx: AppContext) -> Router:
         if await is_daily_limit_exceeded(message, ctx, ad_type=None, limit=ctx.settings.user_daily_ad_limit):
             await message.answer("Превышен суточный лимит объявлений.")
             return
-        await state.update_data(photos=[])
         await state.set_state(CreateAd.sell_photos)
-        await message.answer(
-            f"Добавьте фото объявления. Можно отправить до {MAX_SELL_PHOTOS} фото. Когда закончите, нажмите «Готово».",
-            reply_markup=photo_menu(),
+        await state.set_data({"photos": [], "wizard_message_ids": [], "wizard_user_message_ids": []})
+        await send_wizard_message(
+            message,
+            state,
+            f"Отправьте фото(не более {MAX_SELL_PHOTOS})",
+            reply_markup=sell_photo_inline_menu(),
         )
 
     @router.message(CreateAd.sell_description)
@@ -161,9 +197,15 @@ def build_router(ctx: AppContext) -> Router:
         if not text:
             await message.answer("Отправьте описание текстом.")
             return
+        await remember_wizard_user_message(state, message.message_id)
         await state.update_data(description=text)
         await state.set_state(CreateAd.sell_price)
-        await message.answer("Укажите цену: цена/бесплатно/обмен")
+        await send_wizard_message(
+            message,
+            state,
+            "Укажите цену",
+            reply_markup=wizard_back_keyboard("description"),
+        )
 
     @router.message(CreateAd.sell_price)
     async def sell_price(message: Message, state: FSMContext) -> None:
@@ -171,9 +213,15 @@ def build_router(ctx: AppContext) -> Router:
         if not text:
             await message.answer("Цена обязательна. Укажите цену, бесплатно или обмен.")
             return
+        await remember_wizard_user_message(state, message.message_id)
         await state.update_data(price=text)
         await state.set_state(CreateAd.sell_address)
-        await message.answer("Укажите адрес")
+        await send_wizard_message(
+            message,
+            state,
+            "Укажите Адресс",
+            reply_markup=wizard_back_keyboard("price"),
+        )
 
     @router.message(CreateAd.sell_address)
     async def finish_sell(message: Message, state: FSMContext) -> None:
@@ -181,42 +229,15 @@ def build_router(ctx: AppContext) -> Router:
         if not text:
             await message.answer("Адрес обязателен.")
             return
+        await remember_wizard_user_message(state, message.message_id)
         await state.update_data(address=text)
-        data = await state.get_data()
-        photos: list[tuple[str, str, str]] = data.get("photos", [])
-        if has_duplicate_in_batch([item[2] for item in photos]):
-            await state.clear()
-            await message.answer(
-                "Создание отклонено: среди загруженных фото есть повтор.",
-                reply_markup=main_menu(),
-            )
-            return
-        duplicate_ad_id = ctx.db.find_duplicate_hash(
-            message.from_user.id,
-            [item[2] for item in photos],
-            ctx.settings.duplicate_photo_days,
+        await state.set_state(CreateAd.sell_confirm)
+        await send_wizard_message(
+            message,
+            state,
+            "Подтвердите",
+            reply_markup=sell_confirm_keyboard(),
         )
-        if duplicate_ad_id is not None:
-            await state.clear()
-            await message.answer(
-                f"Создание отклонено: похожее фото уже было в объявлении #{duplicate_ad_id} за последние "
-                f"{ctx.settings.duplicate_photo_days} дней.",
-                reply_markup=main_menu(),
-            )
-            return
-        ad_id = ctx.db.create_ad(
-            user_id=message.from_user.id,
-            username=message.from_user.username,
-            ad_type="sell",
-            category=data["category"],
-            description=data["description"],
-            price=data["price"],
-            address=text,
-            photos=photos,
-        )
-        await state.clear()
-        await message.answer("Объявление создано.", reply_markup=main_menu())
-        await show_one_ad(message, ctx, ctx.db.get_ad(ad_id))
 
     @router.message(CreateAd.sell_photos, F.photo)
     async def sell_photo(message: Message, state: FSMContext, bot: Bot) -> None:
@@ -236,8 +257,14 @@ def build_router(ctx: AppContext) -> Router:
             await message.answer(f"Можно добавить не больше {MAX_SELL_PHOTOS} фото.")
             return
         photos.append((photo.file_id, photo.file_unique_id, image_hash))
+        await remember_wizard_user_message(state, message.message_id)
         await state.update_data(photos=photos)
-        await message.answer(f"Фото добавлено: {len(photos)}/{MAX_SELL_PHOTOS}.")
+        await send_wizard_message(
+            message,
+            state,
+            f"Фото добавлено: {len(photos)}/{MAX_SELL_PHOTOS}.",
+            reply_markup=sell_photo_inline_menu(),
+        )
 
     @router.message(CreateAd.sell_photos, F.text.in_((BTN_DONE, BTN_SKIP_PHOTOS)))
     async def finish_sell_photos(message: Message, state: FSMContext) -> None:
@@ -266,8 +293,127 @@ def build_router(ctx: AppContext) -> Router:
                 reply_markup=main_menu(),
             )
             return
-        await state.set_state(CreateAd.sell_category)
-        await message.answer("Укажите категорию:", reply_markup=categories_menu(include_all=False))
+        await ask_sell_category(message, state)
+
+    @router.callback_query(F.data.startswith("sell_photos:"))
+    async def finish_sell_photos_inline(callback: CallbackQuery, state: FSMContext) -> None:
+        action = callback.data.split(":", 1)[1]
+        data = await state.get_data()
+        photos: list[tuple[str, str, str]] = data.get("photos", [])
+        if action == "done" and not photos:
+            await callback.answer("Добавьте фото или нажмите «Без фото».", show_alert=True)
+            return
+        if action == "skip":
+            photos = []
+            await state.update_data(photos=photos)
+        if has_duplicate_in_batch([item[2] for item in photos]):
+            await reset_sell_wizard(callback.bot, callback.message.chat.id, state)
+            await callback.message.answer(
+                "Создание отклонено: среди загруженных фото есть повтор.",
+                reply_markup=main_menu(),
+            )
+            await callback.answer()
+            return
+        duplicate_ad_id = ctx.db.find_duplicate_hash(
+            callback.from_user.id,
+            [item[2] for item in photos],
+            ctx.settings.duplicate_photo_days,
+        )
+        if duplicate_ad_id is not None:
+            await reset_sell_wizard(callback.bot, callback.message.chat.id, state)
+            await callback.message.answer(
+                f"Создание отклонено: похожее фото уже было в объявлении #{duplicate_ad_id} за последние "
+                f"{ctx.settings.duplicate_photo_days} дней.",
+                reply_markup=main_menu(),
+            )
+            await callback.answer()
+            return
+        await ask_sell_category(callback.message, state)
+        await callback.answer()
+
+    @router.callback_query(F.data.startswith("sell_category:"))
+    async def sell_category_inline(callback: CallbackQuery, state: FSMContext) -> None:
+        category = callback.data.split(":", 1)[1]
+        await state.update_data(category=category)
+        await state.set_state(CreateAd.sell_description)
+        await ask_sell_description(callback.message, state, category)
+        await callback.answer()
+
+    @router.callback_query(F.data.startswith("sell_back:"))
+    async def sell_back(callback: CallbackQuery, state: FSMContext) -> None:
+        target = callback.data.split(":", 1)[1]
+        data = await state.get_data()
+        if target == "photos":
+            await state.set_state(CreateAd.sell_photos)
+            await send_wizard_message(
+                callback.message,
+                state,
+                f"Отправьте фото(не более {MAX_SELL_PHOTOS})",
+                reply_markup=sell_photo_inline_menu(),
+            )
+        elif target == "description":
+            category = data.get("category", "Другое")
+            await state.set_state(CreateAd.sell_description)
+            await ask_sell_description(callback.message, state, category)
+        elif target == "price":
+            await state.set_state(CreateAd.sell_price)
+            await send_wizard_message(
+                callback.message,
+                state,
+                "Укажите цену",
+                reply_markup=wizard_back_keyboard("description"),
+            )
+        elif target == "address":
+            await state.set_state(CreateAd.sell_address)
+            await send_wizard_message(
+                callback.message,
+                state,
+                "Укажите Адресс",
+                reply_markup=wizard_back_keyboard("price"),
+            )
+        await callback.answer()
+
+    @router.callback_query(F.data.startswith("sell_confirm:"))
+    async def sell_confirm(callback: CallbackQuery, state: FSMContext) -> None:
+        action = callback.data.split(":", 1)[1]
+        if action == "reset":
+            await reset_sell_wizard(callback.bot, callback.message.chat.id, state)
+            await callback.answer("Создание отменено")
+            return
+        data = await state.get_data()
+        photos: list[tuple[str, str, str]] = data.get("photos", [])
+        required_fields = ("category", "description", "price", "address")
+        if any(not data.get(field) for field in required_fields):
+            await callback.answer("Не все поля заполнены", show_alert=True)
+            return
+        duplicate_ad_id = ctx.db.find_duplicate_hash(
+            callback.from_user.id,
+            [item[2] for item in photos],
+            ctx.settings.duplicate_photo_days,
+        )
+        if duplicate_ad_id is not None:
+            await reset_sell_wizard(callback.bot, callback.message.chat.id, state)
+            await callback.message.answer(
+                f"Создание отклонено: похожее фото уже было в объявлении #{duplicate_ad_id} за последние "
+                f"{ctx.settings.duplicate_photo_days} дней.",
+                reply_markup=main_menu(),
+            )
+            await callback.answer()
+            return
+        ad_id = ctx.db.create_ad(
+            user_id=callback.from_user.id,
+            username=callback.from_user.username,
+            ad_type="sell",
+            category=data["category"],
+            description=data["description"],
+            price=data["price"],
+            address=data["address"],
+            photos=photos,
+        )
+        await reset_sell_wizard(callback.bot, callback.message.chat.id, state)
+        await callback.message.answer("Объявление создано.", reply_markup=main_menu())
+        await show_one_ad(callback.message, ctx, ctx.db.get_ad(ad_id))
+        await callback.answer()
 
     @router.message(F.text == BTN_RESERVE)
     async def reserve_by_number_start(message: Message, state: FSMContext) -> None:
@@ -390,6 +536,61 @@ async def finish_buy_ad(message: Message, state: FSMContext, ctx: AppContext) ->
 
 async def is_daily_limit_exceeded(message: Message, ctx: AppContext, ad_type: str | None, limit: int) -> bool:
     return ctx.db.count_user_ads_today(message.from_user.id, ad_type=ad_type) >= limit
+
+
+async def is_daily_limit_exceeded_callback(
+    callback: CallbackQuery,
+    ctx: AppContext,
+    ad_type: str | None,
+    limit: int,
+) -> bool:
+    return ctx.db.count_user_ads_today(callback.from_user.id, ad_type=ad_type) >= limit
+
+
+async def send_wizard_message(message: Message, state: FSMContext, text: str, reply_markup=None) -> Message:
+    sent = await message.answer(text, reply_markup=reply_markup)
+    data = await state.get_data()
+    message_ids: list[int] = data.get("wizard_message_ids", [])
+    message_ids.append(sent.message_id)
+    await state.update_data(wizard_message_ids=message_ids)
+    return sent
+
+
+async def remember_wizard_user_message(state: FSMContext, message_id: int) -> None:
+    data = await state.get_data()
+    message_ids: list[int] = data.get("wizard_user_message_ids", [])
+    message_ids.append(message_id)
+    await state.update_data(wizard_user_message_ids=message_ids)
+
+
+async def reset_sell_wizard(bot: Bot, chat_id: int, state: FSMContext) -> None:
+    data = await state.get_data()
+    for message_id in data.get("wizard_message_ids", []) + data.get("wizard_user_message_ids", []):
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        except TelegramBadRequest:
+            continue
+    await state.clear()
+
+
+async def ask_sell_category(message: Message, state: FSMContext) -> None:
+    await state.set_state(CreateAd.sell_category)
+    await send_wizard_message(
+        message,
+        state,
+        "Укажите категорию",
+        reply_markup=sell_categories_inline_menu(),
+    )
+
+
+async def ask_sell_description(message: Message, state: FSMContext, category: str) -> None:
+    extra = " Не забудьте указать размер." if category == "Одежда" else ""
+    await send_wizard_message(
+        message,
+        state,
+        f"Опишите объявление.{extra}",
+        reply_markup=wizard_back_keyboard("photos"),
+    )
 
 
 async def show_feed(message: Message, ctx: AppContext, category: str | None = None, attach_main_menu: bool = False) -> None:

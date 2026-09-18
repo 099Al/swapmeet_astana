@@ -49,6 +49,49 @@ def inline_categories_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def create_inline_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=BTN_SELL, callback_data="create:sell")],
+            [InlineKeyboardButton(text=BTN_BUY, callback_data="create:buy")],
+        ]
+    )
+
+
+def sell_photo_inline_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=BTN_DONE, callback_data="sell_photos:done")],
+            [InlineKeyboardButton(text=BTN_SKIP_PHOTOS, callback_data="sell_photos:skip")],
+        ]
+    )
+
+
+def sell_categories_inline_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=category, callback_data=f"sell_category:{category}")]
+            for category in CATEGORIES
+        ]
+        + [[InlineKeyboardButton(text=BTN_BACK, callback_data="sell_back:photos")]]
+    )
+
+
+def wizard_back_keyboard(target: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=BTN_BACK, callback_data=f"sell_back:{target}")]]
+    )
+
+
+def sell_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Подтвердить", callback_data="sell_confirm:yes")],
+            [InlineKeyboardButton(text="Сбросить", callback_data="sell_confirm:reset")],
+        ]
+    )
+
+
 def create_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=BTN_SELL), KeyboardButton(text=BTN_BUY)], [KeyboardButton(text=BTN_BACK)]],
