@@ -88,8 +88,11 @@ def build_router(ctx: AppContext) -> Router:
         category_code = callback.data.split(":", 1)[1]
         category = None if category_code == "all" else category_code
         await delete_chat_feed_messages(callback.bot, ctx, callback.message.chat.id)
+        title = CATEGORY_ALL if category is None else category
+        sent = await callback.message.answer(title, reply_markup=main_menu())
+        ctx.db.save_ui_message(chat_id=callback.message.chat.id, message_id=sent.message_id, message_kind="category_header")
         await callback.answer()
-        await show_feed(callback.message, ctx, category=category, attach_main_menu=True)
+        await show_feed(callback.message, ctx, category=category, empty_reply_markup=None)
 
     @router.message(F.text.in_((*CATEGORIES, CATEGORY_ALL)))
     async def filter_category(message: Message, state: FSMContext) -> None:
@@ -590,12 +593,22 @@ async def ask_sell_description(message: Message, state: FSMContext, category: st
     )
 
 
-async def show_feed(message: Message, ctx: AppContext, category: str | None = None, attach_main_menu: bool = False) -> None:
+async def show_feed(
+    message: Message,
+    ctx: AppContext,
+    category: str | None = None,
+    attach_main_menu: bool = False,
+    empty_reply_markup=main_menu(),
+) -> None:
     ads = ctx.db.active_ads(ctx.settings.retention_period_days, category=category)
     if not ads:
-        sent = await message.answer("Активных объявлений пока нет.", reply_markup=main_menu())
+        sent = await message.answer("Активных объявлений пока нет.", reply_markup=empty_reply_markup)
         ctx.db.save_ui_message(chat_id=message.chat.id, message_id=sent.message_id, message_kind="empty_feed")
         return
+    if attach_main_menu and len(ctx.db.ad_photos(ads[0].id)) > 1:
+        sent = await message.answer("Лента объявлений:", reply_markup=main_menu())
+        ctx.db.save_ui_message(chat_id=message.chat.id, message_id=sent.message_id, message_kind="feed_header")
+        attach_main_menu = False
     for index, ad in enumerate(ads):
         await show_one_ad(message, ctx, ad, reply_markup=main_menu() if attach_main_menu and index == 0 else None)
 
