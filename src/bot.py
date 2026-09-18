@@ -68,18 +68,20 @@ def build_router(ctx: AppContext) -> Router:
     async def start(message: Message, state: FSMContext) -> None:
         await state.clear()
         ctx.db.cleanup_old_ads(ctx.settings.retention_period_days)
-        await message.answer("Меню открыто. Лента объявлений:", reply_markup=main_menu())
-        await show_feed(message, ctx)
+        await show_feed(message, ctx, attach_main_menu=True)
 
     @router.message(F.text == BTN_BACK)
     async def back(message: Message, state: FSMContext) -> None:
         await state.clear()
-        await message.answer("Главное меню", reply_markup=main_menu())
-        await show_feed(message, ctx)
+        await show_feed(message, ctx, attach_main_menu=True)
 
     @router.message(F.text == BTN_CATEGORIES)
     async def categories(message: Message) -> None:
-        await message.answer("Выберите категорию:", reply_markup=categories_menu(include_all=True))
+        await replace_user_command_with_reply_markup(
+            message,
+            BTN_CATEGORIES,
+            categories_menu(include_all=True, placeholder="Выберите категорию"),
+        )
 
     @router.message(F.text.in_((*CATEGORIES, CATEGORY_ALL)))
     async def filter_category(message: Message, state: FSMContext) -> None:
@@ -385,16 +387,16 @@ async def is_daily_limit_exceeded(message: Message, ctx: AppContext, ad_type: st
     return ctx.db.count_user_ads_today(message.from_user.id, ad_type=ad_type) >= limit
 
 
-async def show_feed(message: Message, ctx: AppContext, category: str | None = None) -> None:
+async def show_feed(message: Message, ctx: AppContext, category: str | None = None, attach_main_menu: bool = False) -> None:
     ads = ctx.db.active_ads(ctx.settings.retention_period_days, category=category)
     if not ads:
         await message.answer("Активных объявлений пока нет.", reply_markup=main_menu())
         return
-    for ad in ads:
-        await show_one_ad(message, ctx, ad)
+    for index, ad in enumerate(ads):
+        await show_one_ad(message, ctx, ad, reply_markup=main_menu() if attach_main_menu and index == 0 else None)
 
 
-async def show_one_ad(message: Message, ctx: AppContext, ad: Ad | None) -> None:
+async def show_one_ad(message: Message, ctx: AppContext, ad: Ad | None, reply_markup=None) -> None:
     if ad is None:
         return
     photos = ctx.db.ad_photos(ad.id)
@@ -414,7 +416,7 @@ async def show_one_ad(message: Message, ctx: AppContext, ad: Ad | None) -> None:
                 photo_index=index,
             )
     elif len(photos) == 1:
-        sent = await message.answer_photo(photos[0], caption=text, parse_mode=ParseMode.HTML)
+        sent = await message.answer_photo(photos[0], caption=text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
         ctx.db.save_ad_message(
             ad_id=ad.id,
             chat_id=message.chat.id,
@@ -423,7 +425,7 @@ async def show_one_ad(message: Message, ctx: AppContext, ad: Ad | None) -> None:
             photo_index=0,
         )
     else:
-        sent = await message.answer(text, parse_mode=ParseMode.HTML)
+        sent = await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
         ctx.db.save_ad_message(
             ad_id=ad.id,
             chat_id=message.chat.id,
@@ -567,6 +569,11 @@ async def safe_delete(message: Message) -> None:
         await message.delete()
     except TelegramBadRequest:
         return
+
+
+async def replace_user_command_with_reply_markup(message: Message, text: str, reply_markup) -> None:
+    await safe_delete(message)
+    await message.answer(text, reply_markup=reply_markup)
 
 
 async def run() -> None:

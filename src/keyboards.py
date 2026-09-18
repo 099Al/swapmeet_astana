@@ -33,14 +33,14 @@ def main_menu() -> ReplyKeyboardMarkup:
     )
 
 
-def categories_menu(include_all: bool = True) -> ReplyKeyboardMarkup:
+def categories_menu(include_all: bool = True, placeholder: str | None = None) -> ReplyKeyboardMarkup:
     rows = [[KeyboardButton(text=CATEGORIES[0]), KeyboardButton(text=CATEGORIES[1])]]
     rows.append([KeyboardButton(text=CATEGORIES[2]), KeyboardButton(text=CATEGORIES[3])])
     if include_all:
         rows.append([KeyboardButton(text=CATEGORY_ALL), KeyboardButton(text=BTN_BACK)])
     else:
         rows.append([KeyboardButton(text=BTN_BACK)])
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, input_field_placeholder=placeholder)
 
 
 def create_menu() -> ReplyKeyboardMarkup:
