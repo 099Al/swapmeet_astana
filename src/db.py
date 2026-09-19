@@ -33,6 +33,14 @@ class AdMessage:
 
 
 @dataclass(frozen=True)
+class AdPhoto:
+    id: int
+    file_id: str
+    file_unique_id: str
+    image_hash: str
+
+
+@dataclass(frozen=True)
 class UiMessage:
     chat_id: int
     message_id: int
@@ -206,6 +214,51 @@ class Database:
         with self.connect() as conn:
             rows = conn.execute("SELECT file_id FROM market_photos WHERE ad_id = ? ORDER BY id", (ad_id,)).fetchall()
         return [row["file_id"] for row in rows]
+
+    def ad_photo_records(self, ad_id: int) -> list[AdPhoto]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, file_id, file_unique_id, image_hash
+                FROM market_photos
+                WHERE ad_id = ?
+                ORDER BY id
+                """,
+                (ad_id,),
+            ).fetchall()
+        return [_ad_photo_from_row(row) for row in rows]
+
+    def add_ad_photo(self, ad_id: int, file_id: str, file_unique_id: str, image_hash: str) -> None:
+        now = datetime.now().isoformat(timespec="seconds")
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO market_photos (ad_id, file_id, file_unique_id, image_hash, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (ad_id, file_id, file_unique_id, image_hash, now),
+            )
+
+    def delete_ad_photos_by_indexes(self, ad_id: int, indexes: list[int]) -> None:
+        records = self.ad_photo_records(ad_id)
+        ids = [records[index].id for index in indexes if 0 <= index < len(records)]
+        if not ids:
+            return
+        placeholders = ",".join("?" for _ in ids)
+        with self.connect() as conn:
+            conn.execute(f"DELETE FROM market_photos WHERE ad_id = ? AND id IN ({placeholders})", (ad_id, *ids))
+
+    def update_ad_description(self, ad_id: int, description: str) -> None:
+        with self.connect() as conn:
+            conn.execute("UPDATE market SET description = ? WHERE id = ?", (description, ad_id))
+
+    def update_ad_price(self, ad_id: int, price: str) -> None:
+        with self.connect() as conn:
+            conn.execute("UPDATE market SET price = ? WHERE id = ?", (price, ad_id))
+
+    def update_ad_address(self, ad_id: int, address: str) -> None:
+        with self.connect() as conn:
+            conn.execute("UPDATE market SET address = ? WHERE id = ?", (address, ad_id))
 
     def save_ad_message(
         self,
@@ -495,6 +548,15 @@ def _ad_message_from_row(row: sqlite3.Row) -> AdMessage:
         message_id=int(row["message_id"]),
         message_kind=str(row["message_kind"]),
         photo_index=int(row["photo_index"]),
+    )
+
+
+def _ad_photo_from_row(row: sqlite3.Row) -> AdPhoto:
+    return AdPhoto(
+        id=int(row["id"]),
+        file_id=str(row["file_id"]),
+        file_unique_id=str(row["file_unique_id"]),
+        image_hash=str(row["image_hash"]),
     )
 
 

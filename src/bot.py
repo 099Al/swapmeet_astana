@@ -22,6 +22,7 @@ from keyboards import (
     BTN_BUY,
     BTN_CATEGORIES,
     BTN_CREATE,
+    BTN_EDIT_AD,
     BTN_RELEASE_RESERVE,
     BTN_REMOVE_AD,
     BTN_RESERVE,
@@ -31,6 +32,10 @@ from keyboards import (
     CATEGORY_ALL,
     categories_menu,
     create_inline_menu,
+    edit_next_finish_keyboard,
+    edit_finish_keyboard,
+    edit_photo_delete_keyboard,
+    edit_photo_menu,
     inline_categories_menu,
     main_menu,
     remove_reason_keyboard,
@@ -57,6 +62,13 @@ class CreateAd(StatesGroup):
     reserve_number = State()
     release_reserve_number = State()
     remove_ad_number = State()
+    edit_number = State()
+    edit_description = State()
+    edit_photo_menu = State()
+    edit_add_photo = State()
+    edit_delete_photo = State()
+    edit_price = State()
+    edit_address = State()
 
 
 @dataclass
@@ -430,6 +442,11 @@ def build_router(ctx: AppContext) -> Router:
         await state.set_state(CreateAd.remove_ad_number)
         await message.answer("Введите номер объявления.")
 
+    @router.message(F.text == BTN_EDIT_AD)
+    async def edit_by_number_start(message: Message, state: FSMContext) -> None:
+        await state.set_state(CreateAd.edit_number)
+        await message.answer("Укажите номер объявления.")
+
     @router.message(CreateAd.reserve_number)
     async def reserve_by_number(message: Message, state: FSMContext) -> None:
         ad = ad_from_number_text(ctx, message.text or "")
@@ -459,6 +476,176 @@ def build_router(ctx: AppContext) -> Router:
             await message.answer("Снять объявление может только автор или админ.", reply_markup=main_menu())
             return
         await message.answer("Укажите причину:", reply_markup=remove_reason_keyboard(ad.id, ad.ad_type))
+
+    @router.message(CreateAd.edit_number)
+    async def edit_by_number(message: Message, state: FSMContext) -> None:
+        ad = ad_from_number_text(ctx, message.text or "")
+        if ad is None or ad.status != "active":
+            await state.clear()
+            await message.answer("Объявление с таким номером не найдено.", reply_markup=main_menu())
+            return
+        if not can_remove_ad(ctx, message.from_user.id, ad):
+            await state.clear()
+            await message.answer("Редактировать объявление может только автор или админ.", reply_markup=main_menu())
+            return
+        await state.update_data(edit_ad_id=ad.id)
+        await state.set_state(CreateAd.edit_description)
+        await message.answer(
+            f"Текущее описание:\n{ad.description}\n\nВведите новое описание.",
+            reply_markup=edit_next_finish_keyboard("photo"),
+        )
+
+    @router.message(CreateAd.edit_description)
+    async def edit_description(message: Message, state: FSMContext) -> None:
+        text = (message.text or "").strip()
+        if not text:
+            await message.answer("Отправьте новое описание текстом.")
+            return
+        data = await state.get_data()
+        ad_id = int(data["edit_ad_id"])
+        ctx.db.update_ad_description(ad_id, text)
+        await refresh_known_messages(message.bot, ctx, ad_id)
+        await message.answer("Описание обновлено.", reply_markup=edit_next_finish_keyboard("photo"))
+
+    @router.callback_query(F.data == "edit_finish")
+    async def edit_finish(callback: CallbackQuery, state: FSMContext) -> None:
+        await state.clear()
+        await callback.message.answer("Изменения внесены.", reply_markup=main_menu())
+        await callback.answer()
+
+    @router.callback_query(F.data.startswith("edit_next:"))
+    async def edit_next(callback: CallbackQuery, state: FSMContext) -> None:
+        target = callback.data.split(":", 1)[1]
+        if target == "photo":
+            await state.set_state(CreateAd.edit_photo_menu)
+            await callback.message.answer("Изменить фото", reply_markup=edit_photo_menu())
+        elif target == "price":
+            data = await state.get_data()
+            ad = ctx.db.get_ad(int(data["edit_ad_id"]))
+            current = ad.price if ad and ad.price else ""
+            await state.set_state(CreateAd.edit_price)
+            await callback.message.answer(
+                f"Текущая цена:\n{current}\n\nВведите новую цену.",
+                reply_markup=edit_next_finish_keyboard("address"),
+            )
+        elif target == "address":
+            data = await state.get_data()
+            ad = ctx.db.get_ad(int(data["edit_ad_id"]))
+            current = ad.address if ad and ad.address else ""
+            await state.set_state(CreateAd.edit_address)
+            await callback.message.answer(
+                f"Текущий адрес:\n{current}\n\nВведите новый адрес.",
+                reply_markup=edit_finish_keyboard(),
+            )
+        elif target == "finish":
+            await state.clear()
+            await callback.message.answer("Изменения внесены.", reply_markup=main_menu())
+        await callback.answer()
+
+    @router.callback_query(F.data.startswith("edit_photo:"))
+    async def edit_photo_action(callback: CallbackQuery, state: FSMContext) -> None:
+        action = callback.data.split(":", 1)[1]
+        data = await state.get_data()
+        ad_id = int(data["edit_ad_id"])
+        photos = ctx.db.ad_photos(ad_id)
+        if action == "menu":
+            await state.set_state(CreateAd.edit_photo_menu)
+            await callback.message.answer("Изменить фото", reply_markup=edit_photo_menu())
+        elif action == "add":
+            if len(photos) >= MAX_SELL_PHOTOS:
+                await callback.answer(f"Уже добавлено {MAX_SELL_PHOTOS} фото.", show_alert=True)
+                return
+            await state.set_state(CreateAd.edit_add_photo)
+            await callback.message.answer(f"Отправьте фото. Можно добавить еще {MAX_SELL_PHOTOS - len(photos)}.")
+        elif action == "delete":
+            if not photos:
+                await callback.answer("Фото нет.", show_alert=True)
+                return
+            await state.set_state(CreateAd.edit_delete_photo)
+            await state.update_data(edit_delete_selected=[])
+            await callback.message.answer(
+                "Выберите фото для удаления:",
+                reply_markup=edit_photo_delete_keyboard(len(photos), set()),
+            )
+        await callback.answer()
+
+    @router.message(CreateAd.edit_add_photo, F.photo)
+    async def edit_add_photo(message: Message, state: FSMContext, bot: Bot) -> None:
+        data = await state.get_data()
+        ad_id = int(data["edit_ad_id"])
+        photos = ctx.db.ad_photos(ad_id)
+        if len(photos) >= MAX_SELL_PHOTOS:
+            await state.set_state(CreateAd.edit_photo_menu)
+            await message.answer("Достигнут лимит фото.", reply_markup=edit_photo_menu())
+            return
+        photo = message.photo[-1]
+        file = await bot.get_file(photo.file_id)
+        stream = await bot.download_file(file.file_path)
+        if stream is None:
+            await message.answer("Не удалось скачать фото, попробуйте другое.")
+            return
+        image_hash = dhash(stream.read())
+        duplicate_ad_id = ctx.db.find_duplicate_hash(message.from_user.id, [image_hash], ctx.settings.duplicate_photo_days)
+        if duplicate_ad_id is not None:
+            await message.answer("Похожее фото уже есть в вашем объявлении.")
+            return
+        ctx.db.add_ad_photo(ad_id, photo.file_id, photo.file_unique_id, image_hash)
+        await republish_ad(message.bot, ctx, ad_id)
+        await state.set_state(CreateAd.edit_photo_menu)
+        await message.answer("Фото добавлено. Изменить фото", reply_markup=edit_photo_menu())
+
+    @router.callback_query(F.data.startswith("edit_photo_toggle:"))
+    async def edit_photo_toggle(callback: CallbackQuery, state: FSMContext) -> None:
+        index = int(callback.data.split(":", 1)[1])
+        data = await state.get_data()
+        selected = set(data.get("edit_delete_selected", []))
+        if index in selected:
+            selected.remove(index)
+        else:
+            selected.add(index)
+        await state.update_data(edit_delete_selected=sorted(selected))
+        ad_id = int(data["edit_ad_id"])
+        photo_count = len(ctx.db.ad_photos(ad_id))
+        await callback.message.edit_reply_markup(reply_markup=edit_photo_delete_keyboard(photo_count, selected))
+        await callback.answer()
+
+    @router.callback_query(F.data == "edit_photo_apply_delete")
+    async def edit_photo_apply_delete(callback: CallbackQuery, state: FSMContext) -> None:
+        data = await state.get_data()
+        ad_id = int(data["edit_ad_id"])
+        selected = list(data.get("edit_delete_selected", []))
+        if not selected:
+            await callback.answer("Выберите фото.", show_alert=True)
+            return
+        ctx.db.delete_ad_photos_by_indexes(ad_id, selected)
+        await republish_ad(callback.bot, ctx, ad_id)
+        await state.set_state(CreateAd.edit_photo_menu)
+        await callback.message.answer("Фото удалены. Изменить фото", reply_markup=edit_photo_menu())
+        await callback.answer()
+
+    @router.message(CreateAd.edit_price)
+    async def edit_price(message: Message, state: FSMContext) -> None:
+        text = (message.text or "").strip()
+        if not text:
+            await message.answer("Отправьте новую цену текстом.")
+            return
+        data = await state.get_data()
+        ad_id = int(data["edit_ad_id"])
+        ctx.db.update_ad_price(ad_id, text)
+        await refresh_known_messages(message.bot, ctx, ad_id)
+        await message.answer("Цена обновлена.", reply_markup=edit_next_finish_keyboard("address"))
+
+    @router.message(CreateAd.edit_address)
+    async def edit_address(message: Message, state: FSMContext) -> None:
+        text = (message.text or "").strip()
+        if not text:
+            await message.answer("Отправьте новый адрес текстом.")
+            return
+        data = await state.get_data()
+        ad_id = int(data["edit_ad_id"])
+        ctx.db.update_ad_address(ad_id, text)
+        await refresh_known_messages(message.bot, ctx, ad_id)
+        await message.answer("Адрес обновлен.", reply_markup=edit_finish_keyboard())
 
     @router.callback_query(F.data.startswith("remove_start:"))
     async def remove_start(callback: CallbackQuery) -> None:
@@ -650,6 +837,52 @@ async def show_one_ad(message: Message, ctx: AppContext, ad: Ad | None, reply_ma
             message_id=sent.message_id,
             message_kind="text",
         )
+
+
+async def send_ad_to_chat(bot: Bot, ctx: AppContext, chat_id: int, ad: Ad) -> None:
+    photos = ctx.db.ad_photos(ad.id)
+    text = render_ad(ad)
+    if len(photos) > 1:
+        media = [
+            InputMediaPhoto(media=file_id, caption=text if index == 0 else None, parse_mode=ParseMode.HTML)
+            for index, file_id in enumerate(photos[:MAX_SELL_PHOTOS])
+        ]
+        sent_messages = await bot.send_media_group(chat_id=chat_id, media=media)
+        for index, sent_message in enumerate(sent_messages):
+            ctx.db.save_ad_message(
+                ad_id=ad.id,
+                chat_id=chat_id,
+                message_id=sent_message.message_id,
+                message_kind="photo",
+                photo_index=index,
+            )
+    elif len(photos) == 1:
+        sent = await bot.send_photo(chat_id=chat_id, photo=photos[0], caption=text, parse_mode=ParseMode.HTML)
+        ctx.db.save_ad_message(
+            ad_id=ad.id,
+            chat_id=chat_id,
+            message_id=sent.message_id,
+            message_kind="photo",
+            photo_index=0,
+        )
+    else:
+        sent = await bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML)
+        ctx.db.save_ad_message(
+            ad_id=ad.id,
+            chat_id=chat_id,
+            message_id=sent.message_id,
+            message_kind="text",
+        )
+
+
+async def republish_ad(bot: Bot, ctx: AppContext, ad_id: int) -> None:
+    ad = ctx.db.get_ad(ad_id)
+    if ad is None:
+        return
+    chat_ids = sorted({message.chat_id for message in ctx.db.ad_messages(ad_id)})
+    await delete_known_messages(bot, ctx, ad_id)
+    for chat_id in chat_ids:
+        await send_ad_to_chat(bot, ctx, chat_id, ad)
 
 
 def render_ad(ad: Ad) -> str:

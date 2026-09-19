@@ -19,6 +19,7 @@ BTN_SKIP_PHOTOS = "Без фото"
 BTN_RESERVE = "Забронировать"
 BTN_RELEASE_RESERVE = "Снять Бронь"
 BTN_REMOVE_AD = "Снять объявление"
+BTN_EDIT_AD = "Редактировать"
 
 
 def main_menu() -> ReplyKeyboardMarkup:
@@ -26,7 +27,7 @@ def main_menu() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text=BTN_CATEGORIES), KeyboardButton(text=BTN_CREATE)],
             [KeyboardButton(text=BTN_RESERVE), KeyboardButton(text=BTN_RELEASE_RESERVE)],
-            [KeyboardButton(text=BTN_REMOVE_AD)],
+            [KeyboardButton(text=BTN_REMOVE_AD), KeyboardButton(text=BTN_EDIT_AD)],
         ],
         resize_keyboard=True,
     )
@@ -89,6 +90,42 @@ def sell_confirm_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="Сбросить", callback_data="sell_confirm:reset")],
         ]
     )
+
+
+def edit_next_finish_keyboard(next_target: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Далее", callback_data=f"edit_next:{next_target}")],
+            [InlineKeyboardButton(text="Завершить", callback_data="edit_finish")],
+        ]
+    )
+
+
+def edit_finish_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="Завершить", callback_data="edit_finish")]]
+    )
+
+
+def edit_photo_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Удалить", callback_data="edit_photo:delete")],
+            [InlineKeyboardButton(text="Добавить фото", callback_data="edit_photo:add")],
+            [InlineKeyboardButton(text="Далее", callback_data="edit_next:price")],
+            [InlineKeyboardButton(text="Завершить", callback_data="edit_finish")],
+        ]
+    )
+
+
+def edit_photo_delete_keyboard(photo_count: int, selected: set[int]) -> InlineKeyboardMarkup:
+    rows = []
+    for index in range(photo_count):
+        mark = "☑" if index in selected else "☐"
+        rows.append([InlineKeyboardButton(text=f"{mark} {index + 1}", callback_data=f"edit_photo_toggle:{index}")])
+    rows.append([InlineKeyboardButton(text="Удалить выбранные", callback_data="edit_photo_apply_delete")])
+    rows.append([InlineKeyboardButton(text=BTN_BACK, callback_data="edit_photo:menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def remove_reason_keyboard(ad_id: int, ad_type: str) -> InlineKeyboardMarkup:
