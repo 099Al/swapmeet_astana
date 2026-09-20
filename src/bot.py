@@ -627,6 +627,7 @@ def build_router(ctx: AppContext) -> Router:
     async def edit_finish(callback: CallbackQuery, state: FSMContext) -> None:
         if not await ensure_private_callback(callback):
             return
+        await apply_pending_edit_photos(callback.bot, ctx, state)
         await state.clear()
         await callback.message.answer("Изменения внесены.", reply_markup=private_main_menu(callback.message))
         await callback.answer()
@@ -658,6 +659,7 @@ def build_router(ctx: AppContext) -> Router:
                 reply_markup=edit_finish_keyboard(),
             )
         elif target == "finish":
+            await apply_pending_edit_photos(callback.bot, ctx, state)
             await state.clear()
             await callback.message.answer("Изменения внесены.", reply_markup=private_main_menu(callback.message))
         await callback.answer()
@@ -670,15 +672,17 @@ def build_router(ctx: AppContext) -> Router:
         data = await state.get_data()
         ad_id = int(data["edit_ad_id"])
         photos = ctx.db.ad_photos(ad_id)
+        pending_photos: list[tuple[str, str, str]] = data.get("edit_added_photos", [])
         if action == "menu":
             await state.set_state(CreateAd.edit_photo_menu)
             await callback.message.answer("Изменить фото", reply_markup=edit_photo_menu())
         elif action == "add":
-            if len(photos) >= MAX_SELL_PHOTOS:
+            if len(photos) + len(pending_photos) >= MAX_SELL_PHOTOS:
                 await callback.answer(f"Уже добавлено {MAX_SELL_PHOTOS} фото.", show_alert=True)
                 return
             await state.set_state(CreateAd.edit_add_photo)
-            await callback.message.answer(f"Отправьте фото. Можно добавить еще {MAX_SELL_PHOTOS - len(photos)}.")
+            remaining = MAX_SELL_PHOTOS - len(photos) - len(pending_photos)
+            await callback.message.answer(f"Отправьте фото. Можно добавить еще {remaining}.")
         elif action == "delete":
             if not photos:
                 await callback.answer("Фото нет.", show_alert=True)
@@ -696,7 +700,8 @@ def build_router(ctx: AppContext) -> Router:
         data = await state.get_data()
         ad_id = int(data["edit_ad_id"])
         photos = ctx.db.ad_photos(ad_id)
-        if len(photos) >= MAX_SELL_PHOTOS:
+        pending_photos: list[tuple[str, str, str]] = data.get("edit_added_photos", [])
+        if len(photos) + len(pending_photos) >= MAX_SELL_PHOTOS:
             await state.set_state(CreateAd.edit_photo_menu)
             await message.answer("Достигнут лимит фото.", reply_markup=edit_photo_menu())
             return
@@ -707,14 +712,17 @@ def build_router(ctx: AppContext) -> Router:
             await message.answer("Не удалось скачать фото, попробуйте другое.")
             return
         image_hash = dhash(stream.read())
+        if has_duplicate_in_batch([item[2] for item in pending_photos] + [image_hash]):
+            await message.answer("Похожее фото уже добавлено в этом редактировании.")
+            return
         duplicate_ad_id = ctx.db.find_duplicate_hash(message.from_user.id, [image_hash], ctx.settings.duplicate_photo_days)
         if duplicate_ad_id is not None:
             await message.answer("Похожее фото уже есть в вашем объявлении.")
             return
-        ctx.db.add_ad_photo(ad_id, photo.file_id, photo.file_unique_id, image_hash)
-        await republish_ad(message.bot, ctx, ad_id)
+        pending_photos.append((photo.file_id, photo.file_unique_id, image_hash))
+        await state.update_data(edit_added_photos=pending_photos)
         await state.set_state(CreateAd.edit_photo_menu)
-        await message.answer("Фото добавлено. Изменить фото", reply_markup=edit_photo_menu())
+        await message.answer("Фото добавлено. Оно появится после завершения редактирования.", reply_markup=edit_photo_menu())
 
     @router.callback_query(F.data.startswith("edit_photo_toggle:"))
     async def edit_photo_toggle(callback: CallbackQuery, state: FSMContext) -> None:
@@ -902,6 +910,19 @@ async def remember_wizard_user_message(state: FSMContext, message_id: int) -> No
     message_ids: list[int] = data.get("wizard_user_message_ids", [])
     message_ids.append(message_id)
     await state.update_data(wizard_user_message_ids=message_ids)
+
+
+async def apply_pending_edit_photos(bot: Bot, ctx: AppContext, state: FSMContext) -> None:
+    data = await state.get_data()
+    ad_id = data.get("edit_ad_id")
+    pending_photos: list[tuple[str, str, str]] = data.get("edit_added_photos", [])
+    if ad_id is None or not pending_photos:
+        return
+    ad_id = int(ad_id)
+    for file_id, file_unique_id, image_hash in pending_photos:
+        ctx.db.add_ad_photo(ad_id, file_id, file_unique_id, image_hash)
+    await state.update_data(edit_added_photos=[])
+    await republish_ad(bot, ctx, ad_id)
 
 
 async def reset_sell_wizard(bot: Bot, chat_id: int, state: FSMContext) -> None:
@@ -1138,6 +1159,7 @@ async def refresh_known_messages(bot: Bot, ctx: AppContext, ad_id: int) -> None:
     ad = ctx.db.get_ad(ad_id)
     if ad is None:
         return
+    has_failed_update = False
     for saved_message in ctx.db.ad_messages(ad_id):
         try:
             if saved_message.message_kind == "photo" and saved_message.photo_index == 0:
@@ -1156,7 +1178,9 @@ async def refresh_known_messages(bot: Bot, ctx: AppContext, ad_id: int) -> None:
                     disable_web_page_preview=True,
                 )
         except TelegramBadRequest:
-            continue
+            has_failed_update = True
+    if has_failed_update:
+        await republish_ad(bot, ctx, ad_id)
 
 
 async def delete_known_messages(bot: Bot, ctx: AppContext, ad_id: int) -> None:
