@@ -31,7 +31,7 @@ from keyboards import (
     BTN_SKIP_PHOTOS,
     CATEGORIES,
     CATEGORY_ALL,
-    categories_menu,
+    buy_categories_inline_menu,
     create_inline_menu,
     edit_next_finish_keyboard,
     edit_finish_keyboard,
@@ -130,7 +130,7 @@ def build_router(ctx: AppContext) -> Router:
         await state.set_data({"photos": [], "wizard_message_ids": [], "wizard_user_message_ids": []})
         await state.set_state(CreateAd.buy_category)
         await safe_delete(callback.message)
-        await callback.message.answer("Укажите категорию:", reply_markup=categories_menu(include_all=False))
+        await callback.message.answer("Укажите категорию:", reply_markup=buy_categories_inline_menu())
         await callback.answer()
 
     @router.callback_query(F.data == "create:sell")
@@ -152,7 +152,7 @@ def build_router(ctx: AppContext) -> Router:
             return
         await state.set_data({"photos": [], "wizard_message_ids": [], "wizard_user_message_ids": []})
         await state.set_state(CreateAd.buy_category)
-        await message.answer("Укажите категорию:", reply_markup=categories_menu(include_all=False))
+        await message.answer("Укажите категорию:", reply_markup=buy_categories_inline_menu())
 
     @router.message(CreateAd.buy_description)
     async def buy_description(message: Message, state: FSMContext) -> None:
@@ -369,6 +369,13 @@ def build_router(ctx: AppContext) -> Router:
         category = callback.data.split(":", 1)[1]
         await state.update_data(category=category)
         await ask_sell_photos(callback.message, state)
+        await callback.answer()
+
+    @router.callback_query(F.data.startswith("buy_category:"))
+    async def buy_category_inline(callback: CallbackQuery, state: FSMContext) -> None:
+        category = callback.data.split(":", 1)[1]
+        await state.update_data(category=category)
+        await ask_buy_photos(callback.message, state)
         await callback.answer()
 
     @router.callback_query(F.data.startswith("sell_back:"))
@@ -966,7 +973,12 @@ async def show_one_ad(message: Message, ctx: AppContext, ad: Ad | None, reply_ma
             photo_index=0,
         )
     else:
-        sent = await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+        sent = await message.answer(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=reply_markup,
+            disable_web_page_preview=True,
+        )
         ctx.db.save_ad_message(
             ad_id=ad.id,
             chat_id=message.chat.id,
@@ -1002,7 +1014,12 @@ async def send_ad_to_chat(bot: Bot, ctx: AppContext, chat_id: ChatId, ad: Ad) ->
             photo_index=0,
         )
     else:
-        sent = await bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML)
+        sent = await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
         ctx.db.save_ad_message(
             ad_id=ad.id,
             chat_id=sent.chat.id,
@@ -1067,6 +1084,7 @@ async def refresh_known_messages(bot: Bot, ctx: AppContext, ad_id: int) -> None:
                     message_id=saved_message.message_id,
                     text=render_ad(ad),
                     parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
                 )
         except TelegramBadRequest:
             continue

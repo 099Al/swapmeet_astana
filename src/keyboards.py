@@ -50,6 +50,16 @@ def inline_categories_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def buy_categories_inline_menu() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=category, callback_data=f"buy_category:{category}")]
+            for category in CATEGORIES
+        ]
+        + [[InlineKeyboardButton(text=BTN_BACK, callback_data="sell_back:create")]]
+    )
+
+
 def create_inline_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
