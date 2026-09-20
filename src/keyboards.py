@@ -7,15 +7,14 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
-CATEGORIES = ("Одежда", "Детские вещи", "Дом(ремонт/быт)", "Другое")
+CATEGORIES = ("Дом(быт/ремонт)", "Другое", "Одежда", "Животные", "Книги", "Детские")
 CATEGORY_ALL = "Все"
 
-BTN_CATEGORIES = "Категории"
-BTN_CREATE = "Подать объявление"
+BTN_CREATE = "Разместить объявление"
 BTN_BACK = "Назад"
 BTN_SELL = "Продать"
 BTN_BUY = "Купить"
-BTN_SKIP_PHOTOS = "Без фото"
+BTN_SKIP_PHOTOS = "Перейти к описанию без фото"
 BTN_RESERVE = "Забронировать"
 BTN_RELEASE_RESERVE = "Снять Бронь"
 BTN_REMOVE_AD = "Снять объявление"
@@ -25,17 +24,19 @@ BTN_EDIT_AD = "Редактировать"
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_CATEGORIES), KeyboardButton(text=BTN_CREATE)],
-            [KeyboardButton(text=BTN_RESERVE), KeyboardButton(text=BTN_RELEASE_RESERVE)],
-            [KeyboardButton(text=BTN_REMOVE_AD), KeyboardButton(text=BTN_EDIT_AD)],
+            [KeyboardButton(text=BTN_CREATE)],
+            [KeyboardButton(text=BTN_REMOVE_AD)],
+            [KeyboardButton(text=BTN_EDIT_AD)],
         ],
         resize_keyboard=True,
     )
 
 
 def categories_menu(include_all: bool = True, placeholder: str | None = None) -> ReplyKeyboardMarkup:
-    rows = [[KeyboardButton(text=CATEGORIES[0]), KeyboardButton(text=CATEGORIES[1])]]
-    rows.append([KeyboardButton(text=CATEGORIES[2]), KeyboardButton(text=CATEGORIES[3])])
+    rows = [
+        [KeyboardButton(text=CATEGORIES[index]), KeyboardButton(text=CATEGORIES[index + 1])]
+        for index in range(0, len(CATEGORIES), 2)
+    ]
     if include_all:
         rows.append([KeyboardButton(text=CATEGORY_ALL), KeyboardButton(text=BTN_BACK)])
     else:
@@ -61,7 +62,7 @@ def create_inline_menu() -> InlineKeyboardMarkup:
 def sell_photo_inline_menu(has_photos: bool = False) -> InlineKeyboardMarkup:
     rows = []
     if has_photos:
-        rows.append([InlineKeyboardButton(text="Добавить описание", callback_data="sell_photos:description")])
+        rows.append([InlineKeyboardButton(text="Перейти к описанию", callback_data="sell_photos:description")])
     else:
         rows.append([InlineKeyboardButton(text=BTN_SKIP_PHOTOS, callback_data="sell_photos:skip")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -73,7 +74,7 @@ def sell_categories_inline_menu() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text=category, callback_data=f"sell_category:{category}")]
             for category in CATEGORIES
         ]
-        + [[InlineKeyboardButton(text=BTN_BACK, callback_data="sell_back:photos")]]
+        + [[InlineKeyboardButton(text=BTN_BACK, callback_data="sell_back:create")]]
     )
 
 
@@ -83,11 +84,11 @@ def wizard_back_keyboard(target: str) -> InlineKeyboardMarkup:
     )
 
 
-def sell_confirm_keyboard() -> InlineKeyboardMarkup:
+def sell_confirm_keyboard(callback_prefix: str = "sell_confirm") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Подтвердить", callback_data="sell_confirm:yes")],
-            [InlineKeyboardButton(text="Сбросить", callback_data="sell_confirm:reset")],
+            [InlineKeyboardButton(text="Подтвердить", callback_data=f"{callback_prefix}:yes")],
+            [InlineKeyboardButton(text="Отменить", callback_data=f"{callback_prefix}:reset")],
         ]
     )
 

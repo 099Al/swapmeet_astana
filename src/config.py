@@ -11,6 +11,7 @@ from dotenv import find_dotenv, load_dotenv
 class Settings:
     bot_token: str
     database_path: str = "swapmeet_astana.sqlite3"
+    publication_chat_id: str | int = "@swapmeet_astana"
     buy_daily_limit: int = 2
     user_daily_ad_limit: int = 10
     duplicate_photo_days: int = 7
@@ -36,6 +37,7 @@ def load_settings() -> Settings:
     return Settings(
         bot_token=token,
         database_path=database_path,
+        publication_chat_id=_get_chat_id(os.getenv("PUBLICATION_CHAT_ID", "@swapmeet_astana")),
         buy_daily_limit=_get_int("BUY_DAILY_LIMIT", 2),
         user_daily_ad_limit=_get_int("USER_DAILY_AD_LIMIT", 10),
         duplicate_photo_days=_get_int("DUPLICATE_PHOTO_DAYS", 7),
@@ -57,3 +59,10 @@ def _get_int_list(name: str) -> tuple[int, ...]:
     if not value:
         return ()
     return tuple(int(item.strip()) for item in value.split(",") if item.strip())
+
+
+def _get_chat_id(value: str) -> str | int:
+    value = value.strip()
+    if value.lstrip("-").isdigit():
+        return int(value)
+    return value

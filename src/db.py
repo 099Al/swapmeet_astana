@@ -12,6 +12,7 @@ from typing import Iterator
 class Ad:
     id: int
     user_id: int
+    username: str | None
     ad_type: str
     category: str
     description: str
@@ -529,6 +530,7 @@ def _ad_from_row(row: sqlite3.Row) -> Ad:
     return Ad(
         id=int(row["id"]),
         user_id=int(row["user_id"]),
+        username=row["username"],
         ad_type=str(row["ad_type"]),
         category=str(row["category"]),
         description=str(row["description"]),
