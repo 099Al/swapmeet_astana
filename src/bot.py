@@ -795,8 +795,8 @@ def build_router(ctx: AppContext) -> Router:
         if ad is None or not can_remove_ad(ctx, callback.from_user.id, ad):
             await callback.answer("Это действие доступно только автору", show_alert=True)
             return
-        ctx.db.mark_deleted(ad_id, reason)
         await delete_known_messages(callback.bot, ctx, ad_id)
+        ctx.db.mark_deleted(ad_id, reason)
         await callback.message.delete()
         await callback.message.answer("Объявление снято.", reply_markup=private_main_menu(callback.message))
         await callback.answer("Объявление снято")
