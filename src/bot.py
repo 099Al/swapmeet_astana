@@ -823,6 +823,7 @@ def build_router(ctx: AppContext) -> Router:
         if command in {"бронь", "забронировать"}:
             await reserve_ad(message, ctx, ad, delete_command_message=True)
             return
+        await safe_delete(message)
 
     @router.message()
     async def fallback(message: Message) -> None:
