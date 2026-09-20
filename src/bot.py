@@ -80,19 +80,34 @@ class AppContext:
     db: Database
 
 
+def private_main_menu(message: Message):
+    return main_menu() if message.chat.type == "private" else None
+
+
+async def ensure_private_callback(callback: CallbackQuery) -> bool:
+    if callback.message.chat.type == "private":
+        return True
+    await callback.answer("Откройте бота в личных сообщениях.", show_alert=True)
+    return False
+
+
 def build_router(ctx: AppContext) -> Router:
     router = Router()
 
     @router.message(CommandStart())
     async def start(message: Message, state: FSMContext) -> None:
+        if message.chat.type != "private":
+            return
         await state.clear()
         ctx.db.cleanup_old_ads(ctx.settings.retention_period_days)
-        await message.answer("Выберите действие в меню.", reply_markup=main_menu())
+        await message.answer("Выберите действие в меню.", reply_markup=private_main_menu(message))
 
     @router.message(F.text == BTN_BACK)
     async def back(message: Message, state: FSMContext) -> None:
+        if message.chat.type != "private":
+            return
         await state.clear()
-        await message.answer("Выберите действие в меню.", reply_markup=main_menu())
+        await message.answer("Выберите действие в меню.", reply_markup=private_main_menu(message))
 
     @router.message(F.text.in_((*CATEGORIES, CATEGORY_ALL)))
     async def filter_category(message: Message, state: FSMContext) -> None:
@@ -112,15 +127,22 @@ def build_router(ctx: AppContext) -> Router:
             await ask_sell_photos(message, state)
             return
 
-        await message.answer("Категории используются только при создании объявления.", reply_markup=main_menu())
+        await message.answer(
+            "Категории используются только при создании объявления.",
+            reply_markup=private_main_menu(message),
+        )
 
     @router.message(Command("place", "create", "post"))
     @router.message(F.text == BTN_CREATE)
     async def create(message: Message) -> None:
+        if message.chat.type != "private":
+            return
         await message.answer("Что хотите сделать?", reply_markup=create_inline_menu())
 
     @router.callback_query(F.data == "create:buy")
     async def buy_start_inline(callback: CallbackQuery, state: FSMContext) -> None:
+        if not await ensure_private_callback(callback):
+            return
         if await is_daily_limit_exceeded_callback(callback, ctx, ad_type="buy", limit=ctx.settings.buy_daily_limit):
             await callback.answer("Превышен суточный лимит объявлений на покупку.", show_alert=True)
             return
@@ -135,6 +157,8 @@ def build_router(ctx: AppContext) -> Router:
 
     @router.callback_query(F.data == "create:sell")
     async def sell_start_inline(callback: CallbackQuery, state: FSMContext) -> None:
+        if not await ensure_private_callback(callback):
+            return
         if await is_daily_limit_exceeded_callback(callback, ctx, ad_type=None, limit=ctx.settings.user_daily_ad_limit):
             await callback.answer("Превышен суточный лимит объявлений.", show_alert=True)
             return
@@ -144,6 +168,8 @@ def build_router(ctx: AppContext) -> Router:
 
     @router.message(F.text == BTN_BUY)
     async def buy_start(message: Message, state: FSMContext) -> None:
+        if message.chat.type != "private":
+            return
         if await is_daily_limit_exceeded(message, ctx, ad_type="buy", limit=ctx.settings.buy_daily_limit):
             await message.answer("Превышен суточный лимит объявлений на покупку.")
             return
@@ -211,6 +237,8 @@ def build_router(ctx: AppContext) -> Router:
 
     @router.message(F.text == BTN_SELL)
     async def sell_start(message: Message, state: FSMContext) -> None:
+        if message.chat.type != "private":
+            return
         if await is_daily_limit_exceeded(message, ctx, ad_type=None, limit=ctx.settings.user_daily_ad_limit):
             await message.answer("Превышен суточный лимит объявлений.")
             return
@@ -306,7 +334,7 @@ def build_router(ctx: AppContext) -> Router:
             await state.clear()
             await message.answer(
                 "Создание отклонено: среди загруженных фото есть повтор.",
-                reply_markup=main_menu(),
+                reply_markup=private_main_menu(message),
             )
             return
         duplicate_ad_id = ctx.db.find_duplicate_hash(
@@ -319,13 +347,15 @@ def build_router(ctx: AppContext) -> Router:
             await message.answer(
                 f"Создание отклонено: похожее фото уже было в объявлении #{duplicate_ad_id} за последние "
                 f"{ctx.settings.duplicate_photo_days} дней.",
-                reply_markup=main_menu(),
+                reply_markup=private_main_menu(message),
             )
             return
         await ask_sell_description_from_state(message, state)
 
     @router.callback_query(F.data.startswith("sell_photos:"))
     async def finish_sell_photos_inline(callback: CallbackQuery, state: FSMContext) -> None:
+        if not await ensure_private_callback(callback):
+            return
         action = callback.data.split(":", 1)[1]
         current_state = await state.get_state()
         data = await state.get_data()
@@ -340,7 +370,7 @@ def build_router(ctx: AppContext) -> Router:
             await reset_sell_wizard(callback.bot, callback.message.chat.id, state)
             await callback.message.answer(
                 "Создание отклонено: среди загруженных фото есть повтор.",
-                reply_markup=main_menu(),
+                reply_markup=private_main_menu(callback.message),
             )
             await callback.answer()
             return
@@ -354,7 +384,7 @@ def build_router(ctx: AppContext) -> Router:
             await callback.message.answer(
                 f"Создание отклонено: похожее фото уже было в объявлении #{duplicate_ad_id} за последние "
                 f"{ctx.settings.duplicate_photo_days} дней.",
-                reply_markup=main_menu(),
+                reply_markup=private_main_menu(callback.message),
             )
             await callback.answer()
             return
@@ -366,6 +396,8 @@ def build_router(ctx: AppContext) -> Router:
 
     @router.callback_query(F.data.startswith("sell_category:"))
     async def sell_category_inline(callback: CallbackQuery, state: FSMContext) -> None:
+        if not await ensure_private_callback(callback):
+            return
         category = callback.data.split(":", 1)[1]
         await state.update_data(category=category)
         await ask_sell_photos(callback.message, state)
@@ -373,6 +405,8 @@ def build_router(ctx: AppContext) -> Router:
 
     @router.callback_query(F.data.startswith("buy_category:"))
     async def buy_category_inline(callback: CallbackQuery, state: FSMContext) -> None:
+        if not await ensure_private_callback(callback):
+            return
         category = callback.data.split(":", 1)[1]
         await state.update_data(category=category)
         await ask_buy_photos(callback.message, state)
@@ -380,11 +414,13 @@ def build_router(ctx: AppContext) -> Router:
 
     @router.callback_query(F.data.startswith("sell_back:"))
     async def sell_back(callback: CallbackQuery, state: FSMContext) -> None:
+        if not await ensure_private_callback(callback):
+            return
         target = callback.data.split(":", 1)[1]
         data = await state.get_data()
         if target == "create":
             await reset_sell_wizard(callback.bot, callback.message.chat.id, state)
-            await callback.message.answer("Создание отменено.", reply_markup=main_menu())
+            await callback.message.answer("Создание отменено.", reply_markup=private_main_menu(callback.message))
         elif target == "photos":
             await state.set_state(CreateAd.sell_photos)
             await send_wizard_message(
@@ -419,6 +455,8 @@ def build_router(ctx: AppContext) -> Router:
 
     @router.callback_query(F.data.startswith("sell_confirm:"))
     async def sell_confirm(callback: CallbackQuery, state: FSMContext) -> None:
+        if not await ensure_private_callback(callback):
+            return
         action = callback.data.split(":", 1)[1]
         if action == "reset":
             await reset_sell_wizard(callback.bot, callback.message.chat.id, state)
@@ -440,7 +478,7 @@ def build_router(ctx: AppContext) -> Router:
             await callback.message.answer(
                 f"Создание отклонено: похожее фото уже было в объявлении #{duplicate_ad_id} за последние "
                 f"{ctx.settings.duplicate_photo_days} дней.",
-                reply_markup=main_menu(),
+                reply_markup=private_main_menu(callback.message),
             )
             await callback.answer()
             return
@@ -460,6 +498,8 @@ def build_router(ctx: AppContext) -> Router:
 
     @router.callback_query(F.data.startswith("buy_confirm:"))
     async def buy_confirm(callback: CallbackQuery, state: FSMContext) -> None:
+        if not await ensure_private_callback(callback):
+            return
         action = callback.data.split(":", 1)[1]
         if action == "reset":
             await reset_sell_wizard(callback.bot, callback.message.chat.id, state)
@@ -474,7 +514,7 @@ def build_router(ctx: AppContext) -> Router:
             await reset_sell_wizard(callback.bot, callback.message.chat.id, state)
             await callback.message.answer(
                 "Создание отклонено: среди загруженных фото есть повтор.",
-                reply_markup=main_menu(),
+                reply_markup=private_main_menu(callback.message),
             )
             await callback.answer()
             return
@@ -492,23 +532,31 @@ def build_router(ctx: AppContext) -> Router:
 
     @router.message(F.text == BTN_RESERVE)
     async def reserve_by_number_start(message: Message, state: FSMContext) -> None:
+        if message.chat.type != "private":
+            return
         await state.set_state(CreateAd.reserve_number)
         await message.answer("Введите номер объявления.")
 
     @router.message(F.text == BTN_RELEASE_RESERVE)
     async def release_by_number_start(message: Message, state: FSMContext) -> None:
+        if message.chat.type != "private":
+            return
         await state.set_state(CreateAd.release_reserve_number)
         await message.answer("Введите номер объявления.")
 
     @router.message(Command("remove"))
     @router.message(F.text == BTN_REMOVE_AD)
     async def remove_by_number_start(message: Message, state: FSMContext) -> None:
+        if message.chat.type != "private":
+            return
         await state.set_state(CreateAd.remove_ad_number)
         await message.answer("Введите номер объявления.")
 
     @router.message(Command("edit"))
     @router.message(F.text == BTN_EDIT_AD)
     async def edit_by_number_start(message: Message, state: FSMContext) -> None:
+        if message.chat.type != "private":
+            return
         await state.set_state(CreateAd.edit_number)
         await message.answer("Укажите номер объявления.")
 
@@ -517,7 +565,7 @@ def build_router(ctx: AppContext) -> Router:
         ad = ad_from_number_text(ctx, message.text or "")
         await state.clear()
         if ad is None:
-            await message.answer("Объявление с таким номером не найдено.", reply_markup=main_menu())
+            await message.answer("Объявление с таким номером не найдено.", reply_markup=private_main_menu(message))
             return
         await reserve_ad(message, ctx, ad)
 
@@ -526,7 +574,7 @@ def build_router(ctx: AppContext) -> Router:
         ad = ad_from_number_text(ctx, message.text or "")
         await state.clear()
         if ad is None:
-            await message.answer("Объявление с таким номером не найдено.", reply_markup=main_menu())
+            await message.answer("Объявление с таким номером не найдено.", reply_markup=private_main_menu(message))
             return
         await release_reserve_ad(message, ctx, ad)
 
@@ -535,10 +583,10 @@ def build_router(ctx: AppContext) -> Router:
         ad = ad_from_number_text(ctx, message.text or "")
         await state.clear()
         if ad is None or ad.status != "active":
-            await message.answer("Объявление с таким номером не найдено.", reply_markup=main_menu())
+            await message.answer("Объявление с таким номером не найдено.", reply_markup=private_main_menu(message))
             return
         if not can_remove_ad(ctx, message.from_user.id, ad):
-            await message.answer("Снять объявление может только автор или админ.", reply_markup=main_menu())
+            await message.answer("Снять объявление может только автор или админ.", reply_markup=private_main_menu(message))
             return
         await message.answer("Укажите причину:", reply_markup=remove_reason_keyboard(ad.id, ad.ad_type))
 
@@ -547,11 +595,14 @@ def build_router(ctx: AppContext) -> Router:
         ad = ad_from_number_text(ctx, message.text or "")
         if ad is None or ad.status != "active":
             await state.clear()
-            await message.answer("Объявление с таким номером не найдено.", reply_markup=main_menu())
+            await message.answer("Объявление с таким номером не найдено.", reply_markup=private_main_menu(message))
             return
         if not can_remove_ad(ctx, message.from_user.id, ad):
             await state.clear()
-            await message.answer("Редактировать объявление может только автор или админ.", reply_markup=main_menu())
+            await message.answer(
+                "Редактировать объявление может только автор или админ.",
+                reply_markup=private_main_menu(message),
+            )
             return
         await state.update_data(edit_ad_id=ad.id)
         await state.set_state(CreateAd.edit_description)
@@ -574,12 +625,16 @@ def build_router(ctx: AppContext) -> Router:
 
     @router.callback_query(F.data == "edit_finish")
     async def edit_finish(callback: CallbackQuery, state: FSMContext) -> None:
+        if not await ensure_private_callback(callback):
+            return
         await state.clear()
-        await callback.message.answer("Изменения внесены.", reply_markup=main_menu())
+        await callback.message.answer("Изменения внесены.", reply_markup=private_main_menu(callback.message))
         await callback.answer()
 
     @router.callback_query(F.data.startswith("edit_next:"))
     async def edit_next(callback: CallbackQuery, state: FSMContext) -> None:
+        if not await ensure_private_callback(callback):
+            return
         target = callback.data.split(":", 1)[1]
         if target == "photo":
             await state.set_state(CreateAd.edit_photo_menu)
@@ -604,11 +659,13 @@ def build_router(ctx: AppContext) -> Router:
             )
         elif target == "finish":
             await state.clear()
-            await callback.message.answer("Изменения внесены.", reply_markup=main_menu())
+            await callback.message.answer("Изменения внесены.", reply_markup=private_main_menu(callback.message))
         await callback.answer()
 
     @router.callback_query(F.data.startswith("edit_photo:"))
     async def edit_photo_action(callback: CallbackQuery, state: FSMContext) -> None:
+        if not await ensure_private_callback(callback):
+            return
         action = callback.data.split(":", 1)[1]
         data = await state.get_data()
         ad_id = int(data["edit_ad_id"])
@@ -661,6 +718,8 @@ def build_router(ctx: AppContext) -> Router:
 
     @router.callback_query(F.data.startswith("edit_photo_toggle:"))
     async def edit_photo_toggle(callback: CallbackQuery, state: FSMContext) -> None:
+        if not await ensure_private_callback(callback):
+            return
         index = int(callback.data.split(":", 1)[1])
         data = await state.get_data()
         selected = set(data.get("edit_delete_selected", []))
@@ -676,6 +735,8 @@ def build_router(ctx: AppContext) -> Router:
 
     @router.callback_query(F.data == "edit_photo_apply_delete")
     async def edit_photo_apply_delete(callback: CallbackQuery, state: FSMContext) -> None:
+        if not await ensure_private_callback(callback):
+            return
         data = await state.get_data()
         ad_id = int(data["edit_ad_id"])
         selected = list(data.get("edit_delete_selected", []))
@@ -714,6 +775,8 @@ def build_router(ctx: AppContext) -> Router:
 
     @router.callback_query(F.data.startswith("remove_start:"))
     async def remove_start(callback: CallbackQuery) -> None:
+        if not await ensure_private_callback(callback):
+            return
         ad_id = int(callback.data.split(":", 1)[1])
         ad = ctx.db.get_ad(ad_id)
         if ad is None or not can_remove_ad(ctx, callback.from_user.id, ad):
@@ -724,6 +787,8 @@ def build_router(ctx: AppContext) -> Router:
 
     @router.callback_query(F.data.startswith("remove_reason:"))
     async def remove_reason(callback: CallbackQuery) -> None:
+        if not await ensure_private_callback(callback):
+            return
         _, ad_id_text, reason = callback.data.split(":", 2)
         ad_id = int(ad_id_text)
         ad = ctx.db.get_ad(ad_id)
@@ -733,7 +798,7 @@ def build_router(ctx: AppContext) -> Router:
         ctx.db.mark_deleted(ad_id, reason)
         await delete_known_messages(callback.bot, ctx, ad_id)
         await callback.message.delete()
-        await callback.message.answer("Объявление снято.", reply_markup=main_menu())
+        await callback.message.answer("Объявление снято.", reply_markup=private_main_menu(callback.message))
         await callback.answer("Объявление снято")
 
     @router.message(F.reply_to_message)
@@ -750,18 +815,11 @@ def build_router(ctx: AppContext) -> Router:
         if command in {"бронь", "забронировать"}:
             await reserve_ad(message, ctx, ad, delete_command_message=True)
             return
-        if command in {"удалить", "снять", "снятьобъявление"}:
-            if not can_remove_ad(ctx, message.from_user.id, ad):
-                await message.answer("Удалить объявление может только автор или админ.")
-                await safe_delete(message)
-                return
-            await message.answer("Укажите причину:", reply_markup=remove_reason_keyboard(ad.id, ad.ad_type))
-            await safe_delete(message)
-            return
 
     @router.message()
     async def fallback(message: Message) -> None:
-        await message.answer("Выберите действие в меню.", reply_markup=main_menu())
+        if message.chat.type == "private":
+            await message.answer("Выберите действие в меню.", reply_markup=private_main_menu(message))
 
     return router
 
@@ -769,18 +827,21 @@ def build_router(ctx: AppContext) -> Router:
 async def finish_buy_ad(message: Message, state: FSMContext, ctx: AppContext) -> None:
     if await is_daily_limit_exceeded(message, ctx, ad_type="buy", limit=ctx.settings.buy_daily_limit):
         await state.clear()
-        await message.answer("Превышен суточный лимит объявлений на покупку.", reply_markup=main_menu())
+        await message.answer(
+            "Превышен суточный лимит объявлений на покупку.",
+            reply_markup=private_main_menu(message),
+        )
         return
     data = await state.get_data()
     if not data.get("category") or not data.get("description"):
-        await message.answer("Не все поля заполнены.", reply_markup=main_menu())
+        await message.answer("Не все поля заполнены.", reply_markup=private_main_menu(message))
         return
     photos: list[tuple[str, str, str]] = data.get("photos", [])
     if has_duplicate_in_batch([item[2] for item in photos]):
         await state.clear()
         await message.answer(
             "Создание отклонено: среди загруженных фото есть повтор.",
-            reply_markup=main_menu(),
+            reply_markup=private_main_menu(message),
         )
         return
     ad_id = ctx.db.create_ad(
@@ -798,17 +859,20 @@ async def finish_buy_ad(message: Message, state: FSMContext, ctx: AppContext) ->
 async def publish_created_ad(bot: Bot, message: Message, ctx: AppContext, ad_id: int) -> None:
     ad = ctx.db.get_ad(ad_id)
     if ad is None:
-        await message.answer("Объявление создано, но не найдено для публикации.", reply_markup=main_menu())
+        await message.answer(
+            "Объявление создано, но не найдено для публикации.",
+            reply_markup=private_main_menu(message),
+        )
         return
     try:
         await send_ad_to_chat(bot, ctx, ctx.settings.publication_chat_id, ad)
     except TelegramBadRequest:
         await message.answer(
             "Объявление создано, но не удалось опубликовать его в чат объявлений.",
-            reply_markup=main_menu(),
+            reply_markup=private_main_menu(message),
         )
         return
-    await message.answer("Объявление создано и опубликовано.", reply_markup=main_menu())
+    await message.answer("Объявление создано и опубликовано.", reply_markup=private_main_menu(message))
 
 
 async def is_daily_limit_exceeded(message: Message, ctx: AppContext, ad_type: str | None, limit: int) -> bool:
@@ -929,7 +993,7 @@ async def show_feed(
     ctx: AppContext,
     category: str | None = None,
     attach_main_menu: bool = False,
-    empty_reply_markup=main_menu(),
+    empty_reply_markup=None,
 ) -> None:
     ads = ctx.db.active_ads(ctx.settings.retention_period_days, category=category)
     if not ads:
@@ -937,11 +1001,16 @@ async def show_feed(
         ctx.db.save_ui_message(chat_id=message.chat.id, message_id=sent.message_id, message_kind="empty_feed")
         return
     if attach_main_menu and len(ctx.db.ad_photos(ads[0].id)) > 1:
-        sent = await message.answer("Лента объявлений:", reply_markup=main_menu())
+        sent = await message.answer("Лента объявлений:", reply_markup=private_main_menu(message))
         ctx.db.save_ui_message(chat_id=message.chat.id, message_id=sent.message_id, message_kind="feed_header")
         attach_main_menu = False
     for index, ad in enumerate(ads):
-        await show_one_ad(message, ctx, ad, reply_markup=main_menu() if attach_main_menu and index == 0 else None)
+        await show_one_ad(
+            message,
+            ctx,
+            ad,
+            reply_markup=private_main_menu(message) if attach_main_menu and index == 0 else None,
+        )
 
 
 async def show_one_ad(message: Message, ctx: AppContext, ad: Ad | None, reply_markup=None) -> None:
@@ -1156,39 +1225,42 @@ def can_remove_ad(ctx: AppContext, user_id: int, ad: Ad) -> bool:
 async def reserve_ad(message: Message, ctx: AppContext, ad: Ad, delete_command_message: bool = False) -> None:
     if ad.status != "active":
         if not delete_command_message:
-            await message.answer("Объявление уже недоступно.", reply_markup=main_menu())
+            await message.answer("Объявление уже недоступно.", reply_markup=private_main_menu(message))
         if delete_command_message:
             await safe_delete(message)
         return
     if ad.reserved_by is not None:
         if not delete_command_message:
-            await message.answer("Объявление уже забронировано.", reply_markup=main_menu())
+            await message.answer("Объявление уже забронировано.", reply_markup=private_main_menu(message))
         if delete_command_message:
             await safe_delete(message)
         return
     if ctx.db.reserve(ad.id, message.from_user.id):
         await refresh_known_messages(message.bot, ctx, ad.id)
         if not delete_command_message:
-            await message.answer("Объявление забронировано.", reply_markup=main_menu())
+            await message.answer("Объявление забронировано.", reply_markup=private_main_menu(message))
     else:
         if not delete_command_message:
-            await message.answer("Объявление уже забронировано.", reply_markup=main_menu())
+            await message.answer("Объявление уже забронировано.", reply_markup=private_main_menu(message))
     if delete_command_message:
         await safe_delete(message)
 
 
 async def release_reserve_ad(message: Message, ctx: AppContext, ad: Ad) -> None:
     if ad.reserved_by is None:
-        await message.answer("У объявления нет брони.", reply_markup=main_menu())
+        await message.answer("У объявления нет брони.", reply_markup=private_main_menu(message))
         return
     if ad.user_id != message.from_user.id and ad.reserved_by != message.from_user.id:
-        await message.answer("Снять бронь может автор брони или автор объявления.", reply_markup=main_menu())
+        await message.answer(
+            "Снять бронь может автор брони или автор объявления.",
+            reply_markup=private_main_menu(message),
+        )
         return
     if ctx.db.release_reserve(ad.id, message.from_user.id):
         await refresh_known_messages(message.bot, ctx, ad.id)
-        await message.answer("Бронь снята.", reply_markup=main_menu())
+        await message.answer("Бронь снята.", reply_markup=private_main_menu(message))
     else:
-        await message.answer("Не удалось снять бронь.", reply_markup=main_menu())
+        await message.answer("Не удалось снять бронь.", reply_markup=private_main_menu(message))
 
 
 async def safe_delete(message: Message) -> None:
