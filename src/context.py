@@ -25,8 +25,9 @@ class CreateAd(StatesGroup):
     edit_number = State()
     edit_description = State()
     edit_photo_menu = State()
-    edit_add_photo = State()
     edit_delete_photo = State()
+    edit_replace_photo_select = State()
+    edit_replace_photo_upload = State()
     edit_price = State()
     edit_address = State()
 

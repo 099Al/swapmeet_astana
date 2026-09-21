@@ -114,6 +114,7 @@ def build_router(ctx: AppContext) -> Router:
         is_hourly_limit_exceeded_callback=is_hourly_limit_exceeded_callback,
         private_main_menu=private_main_menu,
         publish_created_ad=publish_created_ad,
+        replace_published_ad_photo=replace_published_ad_photo,
         refresh_known_messages=refresh_known_messages,
         release_reserve_ad=release_reserve_ad,
         remember_wizard_user_message=remember_wizard_user_message,
@@ -500,6 +501,33 @@ async def refresh_known_messages(bot: Bot, ctx: AppContext, ad_id: int) -> None:
             has_failed_update = True
     if has_failed_update:
         await republish_ad(bot, ctx, ad_id)
+
+
+async def replace_published_ad_photo(bot: Bot, ctx: AppContext, ad_id: int, photo_index: int) -> bool:
+    ad = ctx.db.get_ad(ad_id)
+    if ad is None:
+        return False
+    photos = ctx.db.ad_photos(ad_id)
+    if photo_index < 0 or photo_index >= len(photos):
+        return False
+    updated = False
+    for saved_message in ctx.db.ad_messages(ad_id):
+        if saved_message.message_kind != "photo" or saved_message.photo_index != photo_index:
+            continue
+        try:
+            await bot.edit_message_media(
+                chat_id=saved_message.chat_id,
+                message_id=saved_message.message_id,
+                media=InputMediaPhoto(
+                    media=photos[photo_index],
+                    caption=render_ad(ad) if photo_index == 0 else None,
+                    parse_mode=ParseMode.HTML if photo_index == 0 else None,
+                ),
+            )
+            updated = True
+        except TelegramBadRequest:
+            continue
+    return updated
 
 
 async def delete_known_messages(bot: Bot, ctx: AppContext, ad_id: int) -> None:

@@ -282,6 +282,21 @@ class Database:
                 (ad_id, file_id, file_unique_id, image_hash, now),
             )
 
+    def replace_ad_photo_by_index(self, ad_id: int, index: int, file_id: str, file_unique_id: str, image_hash: str) -> bool:
+        records = self.ad_photo_records(ad_id)
+        if index < 0 or index >= len(records):
+            return False
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE market_photos
+                SET file_id = ?, file_unique_id = ?, image_hash = ?
+                WHERE id = ?
+                """,
+                (file_id, file_unique_id, image_hash, records[index].id),
+            )
+            return cursor.rowcount == 1
+
     def delete_ad_photos_by_indexes(self, ad_id: int, indexes: list[int]) -> None:
         records = self.ad_photo_records(ad_id)
         ids = [records[index].id for index in indexes if 0 <= index < len(records)]

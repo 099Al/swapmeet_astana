@@ -103,30 +103,33 @@ def sell_confirm_keyboard(callback_prefix: str = "sell_confirm") -> InlineKeyboa
     )
 
 
-def edit_next_finish_keyboard(next_target: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Далее", callback_data=f"edit_next:{next_target}")],
-            [InlineKeyboardButton(text="Завершить", callback_data="edit_finish")],
-        ]
-    )
-
-
 def edit_finish_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="Завершить", callback_data="edit_finish")]]
     )
 
 
-def edit_photo_menu() -> InlineKeyboardMarkup:
+def edit_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Удалить", callback_data="edit_photo:delete")],
-            [InlineKeyboardButton(text="Добавить фото", callback_data="edit_photo:add")],
-            [InlineKeyboardButton(text="Далее", callback_data="edit_next:price")],
+            [
+                InlineKeyboardButton(text="Удалить фото", callback_data="edit_photo:delete"),
+                InlineKeyboardButton(text="Заменить фото", callback_data="edit_photo:replace"),
+            ],
+            [
+                InlineKeyboardButton(text="Описание", callback_data="edit_field:description"),
+            ],
+            [
+                InlineKeyboardButton(text="Цена", callback_data="edit_field:price"),
+                InlineKeyboardButton(text="Адрес", callback_data="edit_field:address"),
+            ],
             [InlineKeyboardButton(text="Завершить", callback_data="edit_finish")],
         ]
     )
+
+
+def edit_photo_menu() -> InlineKeyboardMarkup:
+    return edit_menu()
 
 
 def edit_photo_delete_keyboard(photo_count: int, selected: set[int]) -> InlineKeyboardMarkup:
@@ -135,6 +138,16 @@ def edit_photo_delete_keyboard(photo_count: int, selected: set[int]) -> InlineKe
         mark = "☑" if index in selected else "☐"
         rows.append([InlineKeyboardButton(text=f"{mark} {index + 1}", callback_data=f"edit_photo_toggle:{index}")])
     rows.append([InlineKeyboardButton(text="Удалить выбранные", callback_data="edit_photo_apply_delete")])
+    rows.append([InlineKeyboardButton(text=BTN_BACK, callback_data="edit_photo:menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def edit_photo_replace_keyboard(photo_count: int, selected: int | None) -> InlineKeyboardMarkup:
+    rows = []
+    for index in range(photo_count):
+        mark = "🔘" if selected == index else "⚪"
+        rows.append([InlineKeyboardButton(text=f"{mark} {index + 1}", callback_data=f"edit_photo_replace_select:{index}")])
+    rows.append([InlineKeyboardButton(text="Заменить выбранное", callback_data="edit_photo_apply_replace")])
     rows.append([InlineKeyboardButton(text=BTN_BACK, callback_data="edit_photo:menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
