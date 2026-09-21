@@ -595,6 +595,7 @@ def build_router(ctx: AppContext) -> Router:
         await publish_created_ad(callback.bot, callback.message, ctx, ad_id)
         await callback.answer()
 
+    @router.message(Command("reserve"))
     @router.message(F.text == BTN_RESERVE)
     async def reserve_by_number_start(message: Message, state: FSMContext) -> None:
         if message.chat.type != "private":
@@ -1465,6 +1466,7 @@ async def run() -> None:
         [
             BotCommand(command="start", description="Открыть меню"),
             BotCommand(command="place", description="Разместить объявление"),
+            BotCommand(command="reserve", description="Забронировать объявление"),
             BotCommand(command="remove", description="Снять объявление"),
             BotCommand(command="edit", description="Редактировать объявление"),
         ]

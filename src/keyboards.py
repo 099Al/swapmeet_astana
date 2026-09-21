@@ -25,10 +25,8 @@ def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BTN_CREATE)],
-            [KeyboardButton(text=BTN_RESERVE)],
-            [KeyboardButton(text=BTN_RELEASE_RESERVE)],
-            [KeyboardButton(text=BTN_REMOVE_AD)],
-            [KeyboardButton(text=BTN_EDIT_AD)],
+            [KeyboardButton(text=BTN_REMOVE_AD), KeyboardButton(text=BTN_EDIT_AD)],
+            [KeyboardButton(text=BTN_RELEASE_RESERVE), KeyboardButton(text=BTN_RESERVE)],
         ],
         resize_keyboard=True,
     )
