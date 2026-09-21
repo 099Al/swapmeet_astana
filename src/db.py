@@ -138,6 +138,13 @@ class Database:
                     UNIQUE(chat_id, message_id)
                 );
 
+                CREATE TABLE IF NOT EXISTS scheduled_jobs (
+                    name TEXT PRIMARY KEY,
+                    last_run_at TEXT,
+                    next_run_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_market_active_created
                     ON market(status, created_at);
                 CREATE INDEX IF NOT EXISTS idx_market_user_created
@@ -152,6 +159,15 @@ class Database:
                     ON ui_messages(chat_id);
                 """
             )
+
+    def expired_active_ad_ids(self, retention_days: int) -> list[int]:
+        cutoff = _start_of_day(datetime.now()) - timedelta(days=retention_days)
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT id FROM market WHERE status = 'active' AND created_at < ?",
+                (cutoff.isoformat(),),
+            ).fetchall()
+        return [int(row["id"]) for row in rows]
 
     def cleanup_old_ads(self, retention_days: int) -> None:
         cutoff = _start_of_day(datetime.now()) - timedelta(days=retention_days)
@@ -187,6 +203,21 @@ class Database:
             conn.execute("DELETE FROM market_photos WHERE ad_id IN (SELECT id FROM market WHERE created_at < ?)", (cutoff.isoformat(),))
             conn.execute("DELETE FROM ad_messages WHERE ad_id IN (SELECT id FROM market WHERE created_at < ?)", (cutoff.isoformat(),))
             conn.execute("DELETE FROM market WHERE created_at < ?", (cutoff.isoformat(),))
+
+    def upsert_scheduled_job(self, name: str, *, last_run_at: str | None, next_run_at: str) -> None:
+        updated_at = datetime.now().isoformat(timespec="seconds")
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO scheduled_jobs (name, last_run_at, next_run_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                    last_run_at = COALESCE(excluded.last_run_at, scheduled_jobs.last_run_at),
+                    next_run_at = excluded.next_run_at,
+                    updated_at = excluded.updated_at
+                """,
+                (name, last_run_at, next_run_at, updated_at),
+            )
 
     def active_ads(self, retention_days: int, category: str | None = None) -> list[Ad]:
         cutoff = _start_of_day(datetime.now()) - timedelta(days=retention_days)

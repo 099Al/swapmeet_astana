@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+from contextlib import suppress
 from dataclasses import dataclass
+from datetime import datetime, time, timedelta
 from typing import Union
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -48,6 +50,8 @@ from keyboards import (
 MAX_BUY_DESCRIPTION = 500
 MAX_SELL_PHOTOS = 6
 PUBLIC_NUMBER_OFFSET = 99999
+RETENTION_CLEANUP_JOB = "retention_cleanup"
+RETENTION_CLEANUP_TIME = time(hour=1)
 ChatId = Union[int, str]
 
 
@@ -99,7 +103,6 @@ def build_router(ctx: AppContext) -> Router:
         if message.chat.type != "private":
             return
         await state.clear()
-        ctx.db.cleanup_old_ads(ctx.settings.retention_period_days)
         await message.answer("Выберите действие в меню.", reply_markup=private_main_menu(message))
 
     @router.message(F.text == BTN_BACK)
@@ -1300,6 +1303,39 @@ async def replace_user_command_with_reply_markup(message: Message, text: str, re
     await message.answer(text, reply_markup=reply_markup)
 
 
+def next_retention_cleanup_at(now: datetime | None = None) -> datetime:
+    now = now or datetime.now()
+    next_run = datetime.combine(now.date(), RETENTION_CLEANUP_TIME)
+    if next_run <= now:
+        next_run += timedelta(days=1)
+    return next_run
+
+
+async def run_retention_cleanup(bot: Bot, ctx: AppContext) -> None:
+    for ad_id in ctx.db.expired_active_ad_ids(ctx.settings.retention_period_days):
+        await delete_known_messages(bot, ctx, ad_id)
+    ctx.db.cleanup_old_ads(ctx.settings.retention_period_days)
+
+
+async def retention_cleanup_scheduler(bot: Bot, ctx: AppContext) -> None:
+    next_run = next_retention_cleanup_at()
+    ctx.db.upsert_scheduled_job(
+        RETENTION_CLEANUP_JOB,
+        last_run_at=None,
+        next_run_at=next_run.isoformat(timespec="seconds"),
+    )
+    while True:
+        await asyncio.sleep(max((next_run - datetime.now()).total_seconds(), 0))
+        await run_retention_cleanup(bot, ctx)
+        last_run = datetime.now()
+        next_run = next_retention_cleanup_at(last_run)
+        ctx.db.upsert_scheduled_job(
+            RETENTION_CLEANUP_JOB,
+            last_run_at=last_run.isoformat(timespec="seconds"),
+            next_run_at=next_run.isoformat(timespec="seconds"),
+        )
+
+
 async def run() -> None:
     logging.basicConfig(level=logging.INFO)
     settings = load_settings()
@@ -1307,7 +1343,6 @@ async def run() -> None:
     db.init()
     for admin_id in settings.admin_ids:
         db.upsert_admin(admin_id)
-    db.cleanup_old_ads(settings.retention_period_days)
 
     bot = Bot(settings.bot_token)
     await bot.set_my_commands(
@@ -1319,8 +1354,22 @@ async def run() -> None:
         ]
     )
     dispatcher = Dispatcher(storage=MemoryStorage())
-    dispatcher.include_router(build_router(AppContext(settings=settings, db=db)))
-    await dispatcher.start_polling(bot)
+    ctx = AppContext(settings=settings, db=db)
+    await run_retention_cleanup(bot, ctx)
+    cleanup_started_at = datetime.now()
+    db.upsert_scheduled_job(
+        RETENTION_CLEANUP_JOB,
+        last_run_at=cleanup_started_at.isoformat(timespec="seconds"),
+        next_run_at=next_retention_cleanup_at(cleanup_started_at).isoformat(timespec="seconds"),
+    )
+    cleanup_task = asyncio.create_task(retention_cleanup_scheduler(bot, ctx))
+    dispatcher.include_router(build_router(ctx))
+    try:
+        await dispatcher.start_polling(bot)
+    finally:
+        cleanup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await cleanup_task
 
 
 
