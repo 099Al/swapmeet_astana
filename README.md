@@ -26,12 +26,29 @@ Telegram-бот для объявлений купли, продажи и обм
 BOT_TOKEN=put-telegram-bot-token-here
 DATABASE_PATH=swapmeet_astana.sqlite3
 PUBLICATION_CHAT_ID=@swapmeet_astana
+COMMUNICATION_TOPIC_ID=
+COMMUNICATION_DAILY_MESSAGE_LIMIT=20
 BUY_DAILY_LIMIT=2
 USER_DAILY_AD_LIMIT=10
+USER_HOURLY_AD_LIMIT=5
 DUPLICATE_PHOTO_DAYS=7
 RETENTION_PERIOD_DAYS=7
 ADMIN_IDS=
 ```
+
+### Таблицы SQLite
+
+| Таблица | Назначение |
+|---|---|
+| `market` | Основная таблица объявлений: создание, чтение, редактирование, снятие и бронь. |
+| `market_photos` | Фото объявлений, включая `file_id`, `file_unique_id` и perceptual hash для поиска повторов. |
+| `ad_messages` | Связь объявлений с опубликованными Telegram-сообщениями, чтобы обновлять или удалять публикации. |
+| `admins` | Администраторы. Поле `can_manage_admins` даёт право добавлять других админов. Админы из `ADMIN_IDS` получают это право при запуске. |
+| `communication_messages` | Учёт сообщений пользователей в теме `Общение` для суточного лимита. |
+| `user_blocks` | Блокировки пользователей с причиной и сроком действия, например если пользователь запретил боту писать в личку. |
+| `ui_messages` | Служебные сообщения интерфейса и ленты, которые бот может удалять при очистке. |
+| `hist_market` | Архив снятых или истёкших объявлений с причиной удаления. |
+| `scheduled_jobs` | Состояние фоновых задач, сейчас используется для ежедневной очистки объявлений. |
 
 ### Запуск
 
