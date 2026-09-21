@@ -12,6 +12,7 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command, CommandStart
+from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -146,6 +147,9 @@ def build_router(ctx: AppContext) -> Router:
     async def buy_start_inline(callback: CallbackQuery, state: FSMContext) -> None:
         if not await ensure_private_callback(callback):
             return
+        if await is_hourly_limit_exceeded_callback(callback, ctx):
+            await callback.answer(hourly_limit_message(ctx), show_alert=True)
+            return
         if await is_daily_limit_exceeded_callback(callback, ctx, ad_type="buy", limit=ctx.settings.buy_daily_limit):
             await callback.answer("Превышен суточный лимит объявлений на покупку.", show_alert=True)
             return
@@ -162,6 +166,9 @@ def build_router(ctx: AppContext) -> Router:
     async def sell_start_inline(callback: CallbackQuery, state: FSMContext) -> None:
         if not await ensure_private_callback(callback):
             return
+        if await is_hourly_limit_exceeded_callback(callback, ctx):
+            await callback.answer(hourly_limit_message(ctx), show_alert=True)
+            return
         if await is_daily_limit_exceeded_callback(callback, ctx, ad_type=None, limit=ctx.settings.user_daily_ad_limit):
             await callback.answer("Превышен суточный лимит объявлений.", show_alert=True)
             return
@@ -173,6 +180,9 @@ def build_router(ctx: AppContext) -> Router:
     async def buy_start(message: Message, state: FSMContext) -> None:
         if message.chat.type != "private":
             return
+        if await is_hourly_limit_exceeded(message, ctx):
+            await message.answer(hourly_limit_message(ctx))
+            return
         if await is_daily_limit_exceeded(message, ctx, ad_type="buy", limit=ctx.settings.buy_daily_limit):
             await message.answer("Превышен суточный лимит объявлений на покупку.")
             return
@@ -183,7 +193,7 @@ def build_router(ctx: AppContext) -> Router:
         await state.set_state(CreateAd.buy_category)
         await message.answer("Укажите категорию:", reply_markup=buy_categories_inline_menu())
 
-    @router.message(CreateAd.buy_description)
+    @router.message(StateFilter(CreateAd.buy_description))
     async def buy_description(message: Message, state: FSMContext) -> None:
         if is_forwarded(message):
             await message.answer("Пересланные объявления внутри бота не допускаются.")
@@ -204,7 +214,7 @@ def build_router(ctx: AppContext) -> Router:
             reply_markup=sell_confirm_keyboard(callback_prefix="buy_confirm"),
         )
 
-    @router.message(CreateAd.buy_photos, F.photo)
+    @router.message(StateFilter(CreateAd.buy_photos), F.photo)
     async def buy_photo(message: Message, state: FSMContext, bot: Bot) -> None:
         if is_forwarded(message):
             await message.answer("Пересланные объявления внутри бота не допускаются.")
@@ -234,7 +244,7 @@ def build_router(ctx: AppContext) -> Router:
             reply_markup=sell_photo_inline_menu(has_photos=True),
         )
 
-    @router.message(CreateAd.buy_photos, F.text == BTN_SKIP_PHOTOS)
+    @router.message(StateFilter(CreateAd.buy_photos), F.text == BTN_SKIP_PHOTOS)
     async def finish_buy_photos(message: Message, state: FSMContext) -> None:
         await ask_buy_description(message, state)
 
@@ -242,13 +252,16 @@ def build_router(ctx: AppContext) -> Router:
     async def sell_start(message: Message, state: FSMContext) -> None:
         if message.chat.type != "private":
             return
+        if await is_hourly_limit_exceeded(message, ctx):
+            await message.answer(hourly_limit_message(ctx))
+            return
         if await is_daily_limit_exceeded(message, ctx, ad_type=None, limit=ctx.settings.user_daily_ad_limit):
             await message.answer("Превышен суточный лимит объявлений.")
             return
         await state.set_data({"photos": [], "wizard_message_ids": [], "wizard_user_message_ids": []})
         await ask_sell_category(message, state)
 
-    @router.message(CreateAd.sell_description)
+    @router.message(StateFilter(CreateAd.sell_description))
     async def sell_description(message: Message, state: FSMContext) -> None:
         if is_forwarded(message):
             await message.answer("Пересланные объявления внутри бота не допускаются.")
@@ -267,7 +280,7 @@ def build_router(ctx: AppContext) -> Router:
             reply_markup=wizard_back_keyboard("description"),
         )
 
-    @router.message(CreateAd.sell_price)
+    @router.message(StateFilter(CreateAd.sell_price))
     async def sell_price(message: Message, state: FSMContext) -> None:
         text = (message.text or "").strip()
         if not text:
@@ -283,7 +296,7 @@ def build_router(ctx: AppContext) -> Router:
             reply_markup=wizard_back_keyboard("price"),
         )
 
-    @router.message(CreateAd.sell_address)
+    @router.message(StateFilter(CreateAd.sell_address))
     async def finish_sell(message: Message, state: FSMContext) -> None:
         text = (message.text or "").strip()
         if not text:
@@ -299,7 +312,7 @@ def build_router(ctx: AppContext) -> Router:
             reply_markup=sell_confirm_keyboard(),
         )
 
-    @router.message(CreateAd.sell_photos, F.photo)
+    @router.message(StateFilter(CreateAd.sell_photos), F.photo)
     async def sell_photo(message: Message, state: FSMContext, bot: Bot) -> None:
         if is_forwarded(message):
             await message.answer("Пересланные объявления внутри бота не допускаются.")
@@ -329,7 +342,7 @@ def build_router(ctx: AppContext) -> Router:
             reply_markup=sell_photo_inline_menu(has_photos=True),
         )
 
-    @router.message(CreateAd.sell_photos, F.text == BTN_SKIP_PHOTOS)
+    @router.message(StateFilter(CreateAd.sell_photos), F.text == BTN_SKIP_PHOTOS)
     async def finish_sell_photos(message: Message, state: FSMContext) -> None:
         data = await state.get_data()
         photos: list[tuple[str, str, str]] = data.get("photos", [])
@@ -354,6 +367,47 @@ def build_router(ctx: AppContext) -> Router:
             )
             return
         await ask_sell_description_from_state(message, state)
+
+    @router.message(StateFilter(CreateAd.sell_photos), F.text)
+    async def sell_description_without_button(message: Message, state: FSMContext) -> None:
+        if is_forwarded(message):
+            await message.answer("Пересланные объявления внутри бота не допускаются.")
+            return
+        text = (message.text or "").strip()
+        if not text:
+            await message.answer("Отправьте описание текстом.")
+            return
+        data = await state.get_data()
+        photos: list[tuple[str, str, str]] = data.get("photos", [])
+        if has_duplicate_in_batch([item[2] for item in photos]):
+            await state.clear()
+            await message.answer(
+                "Создание отклонено: среди загруженных фото есть повтор.",
+                reply_markup=private_main_menu(message),
+            )
+            return
+        duplicate_ad_id = ctx.db.find_duplicate_hash(
+            message.from_user.id,
+            [item[2] for item in photos],
+            ctx.settings.duplicate_photo_days,
+        )
+        if duplicate_ad_id is not None:
+            await state.clear()
+            await message.answer(
+                f"Создание отклонено: похожее фото уже было в объявлении #{duplicate_ad_id} за последние "
+                f"{ctx.settings.duplicate_photo_days} дней.",
+                reply_markup=private_main_menu(message),
+            )
+            return
+        await remember_wizard_user_message(state, message.message_id)
+        await state.update_data(description=text)
+        await state.set_state(CreateAd.sell_price)
+        await send_wizard_message(
+            message,
+            state,
+            "Укажите цену",
+            reply_markup=wizard_back_keyboard("description"),
+        )
 
     @router.callback_query(F.data.startswith("sell_photos:"))
     async def finish_sell_photos_inline(callback: CallbackQuery, state: FSMContext) -> None:
@@ -471,6 +525,9 @@ def build_router(ctx: AppContext) -> Router:
         if any(not data.get(field) for field in required_fields):
             await callback.answer("Не все поля заполнены", show_alert=True)
             return
+        if await is_hourly_limit_exceeded_callback(callback, ctx):
+            await callback.answer(hourly_limit_message(ctx), show_alert=True)
+            return
         duplicate_ad_id = ctx.db.find_duplicate_hash(
             callback.from_user.id,
             [item[2] for item in photos],
@@ -512,6 +569,9 @@ def build_router(ctx: AppContext) -> Router:
         data = await state.get_data()
         if not data.get("category") or not data.get("description"):
             await callback.answer("Не все поля заполнены", show_alert=True)
+            return
+        if await is_hourly_limit_exceeded_callback(callback, ctx):
+            await callback.answer(hourly_limit_message(ctx), show_alert=True)
             return
         photos: list[tuple[str, str, str]] = data.get("photos", [])
         if has_duplicate_in_batch([item[2] for item in photos]):
@@ -565,7 +625,7 @@ def build_router(ctx: AppContext) -> Router:
         await state.set_state(CreateAd.edit_number)
         await message.answer("Укажите номер объявления.")
 
-    @router.message(CreateAd.reserve_number)
+    @router.message(StateFilter(CreateAd.reserve_number))
     async def reserve_by_number(message: Message, state: FSMContext) -> None:
         ad = ad_from_number_text(ctx, message.text or "")
         await state.clear()
@@ -574,7 +634,7 @@ def build_router(ctx: AppContext) -> Router:
             return
         await reserve_ad(message, ctx, ad)
 
-    @router.message(CreateAd.release_reserve_number)
+    @router.message(StateFilter(CreateAd.release_reserve_number))
     async def release_by_number(message: Message, state: FSMContext) -> None:
         ad = ad_from_number_text(ctx, message.text or "")
         await state.clear()
@@ -583,7 +643,7 @@ def build_router(ctx: AppContext) -> Router:
             return
         await release_reserve_ad(message, ctx, ad)
 
-    @router.message(CreateAd.remove_ad_number)
+    @router.message(StateFilter(CreateAd.remove_ad_number))
     async def remove_by_number(message: Message, state: FSMContext) -> None:
         ad = ad_from_number_text(ctx, message.text or "")
         await state.clear()
@@ -595,7 +655,7 @@ def build_router(ctx: AppContext) -> Router:
             return
         await message.answer("Укажите причину:", reply_markup=remove_reason_keyboard(ad.id, ad.ad_type))
 
-    @router.message(CreateAd.edit_number)
+    @router.message(StateFilter(CreateAd.edit_number))
     async def edit_by_number(message: Message, state: FSMContext) -> None:
         ad = ad_from_number_text(ctx, message.text or "")
         if ad is None or ad.status != "active":
@@ -616,7 +676,7 @@ def build_router(ctx: AppContext) -> Router:
             reply_markup=edit_next_finish_keyboard("photo"),
         )
 
-    @router.message(CreateAd.edit_description)
+    @router.message(StateFilter(CreateAd.edit_description))
     async def edit_description(message: Message, state: FSMContext) -> None:
         text = (message.text or "").strip()
         if not text:
@@ -700,7 +760,7 @@ def build_router(ctx: AppContext) -> Router:
             )
         await callback.answer()
 
-    @router.message(CreateAd.edit_add_photo, F.photo)
+    @router.message(StateFilter(CreateAd.edit_add_photo), F.photo)
     async def edit_add_photo(message: Message, state: FSMContext, bot: Bot) -> None:
         data = await state.get_data()
         ad_id = int(data["edit_ad_id"])
@@ -762,7 +822,7 @@ def build_router(ctx: AppContext) -> Router:
         await callback.message.answer("Фото удалены. Изменить фото", reply_markup=edit_photo_menu())
         await callback.answer()
 
-    @router.message(CreateAd.edit_price)
+    @router.message(StateFilter(CreateAd.edit_price))
     async def edit_price(message: Message, state: FSMContext) -> None:
         text = (message.text or "").strip()
         if not text:
@@ -774,7 +834,7 @@ def build_router(ctx: AppContext) -> Router:
         await refresh_known_messages(message.bot, ctx, ad_id)
         await message.answer("Цена обновлена.", reply_markup=edit_next_finish_keyboard("address"))
 
-    @router.message(CreateAd.edit_address)
+    @router.message(StateFilter(CreateAd.edit_address))
     async def edit_address(message: Message, state: FSMContext) -> None:
         text = (message.text or "").strip()
         if not text:
@@ -833,8 +893,21 @@ def build_router(ctx: AppContext) -> Router:
         await safe_delete(message)
 
     @router.message()
-    async def fallback(message: Message) -> None:
+    async def fallback(message: Message, state: FSMContext) -> None:
         if message.chat.type == "private":
+            current_state = await state.get_state()
+            if current_state == CreateAd.sell_description.state:
+                await sell_description(message, state)
+                return
+            if current_state == CreateAd.sell_price.state:
+                await sell_price(message, state)
+                return
+            if current_state == CreateAd.sell_address.state:
+                await finish_sell(message, state)
+                return
+            if current_state is not None:
+                await message.answer("Завершите текущий шаг или нажмите «Назад».")
+                return
             await message.answer("Выберите действие в меню.", reply_markup=private_main_menu(message))
             return
         if is_publication_chat(message, ctx):
@@ -844,6 +917,13 @@ def build_router(ctx: AppContext) -> Router:
 
 
 async def finish_buy_ad(message: Message, state: FSMContext, ctx: AppContext) -> None:
+    if await is_hourly_limit_exceeded(message, ctx):
+        await state.clear()
+        await message.answer(
+            hourly_limit_message(ctx),
+            reply_markup=private_main_menu(message),
+        )
+        return
     if await is_daily_limit_exceeded(message, ctx, ad_type="buy", limit=ctx.settings.buy_daily_limit):
         await state.clear()
         await message.answer(
@@ -899,6 +979,10 @@ async def is_daily_limit_exceeded(message: Message, ctx: AppContext, ad_type: st
     return ctx.db.count_user_ads_today(message.from_user.id, ad_type=ad_type) >= limit
 
 
+async def is_hourly_limit_exceeded(message: Message, ctx: AppContext) -> bool:
+    return ctx.db.count_user_ads_last_hour(message.from_user.id) >= ctx.settings.user_hourly_ad_limit
+
+
 async def is_daily_limit_exceeded_callback(
     callback: CallbackQuery,
     ctx: AppContext,
@@ -906,6 +990,14 @@ async def is_daily_limit_exceeded_callback(
     limit: int,
 ) -> bool:
     return ctx.db.count_user_ads_today(callback.from_user.id, ad_type=ad_type) >= limit
+
+
+async def is_hourly_limit_exceeded_callback(callback: CallbackQuery, ctx: AppContext) -> bool:
+    return ctx.db.count_user_ads_last_hour(callback.from_user.id) >= ctx.settings.user_hourly_ad_limit
+
+
+def hourly_limit_message(ctx: AppContext) -> str:
+    return f"Превышен лимит: не больше {ctx.settings.user_hourly_ad_limit} объявлений в час."
 
 
 async def send_wizard_message(message: Message, state: FSMContext, text: str, reply_markup=None) -> Message:

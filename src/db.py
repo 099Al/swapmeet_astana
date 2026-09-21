@@ -436,6 +436,16 @@ class Database:
         with self.connect() as conn:
             return int(conn.execute(sql, params).fetchone()[0])
 
+    def count_user_ads_last_hour(self, user_id: int) -> int:
+        start = (datetime.now() - timedelta(hours=1)).isoformat(timespec="seconds")
+        with self.connect() as conn:
+            return int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM market WHERE user_id = ? AND created_at >= ?",
+                    (user_id, start),
+                ).fetchone()[0]
+            )
+
     def find_duplicate_hash(
         self,
         user_id: int,
