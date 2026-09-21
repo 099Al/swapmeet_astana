@@ -13,6 +13,7 @@ class Ad:
     id: int
     user_id: int
     username: str | None
+    author_name: str | None
     ad_type: str
     category: str
     description: str
@@ -75,6 +76,7 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER NOT NULL,
                     username TEXT,
+                    author_name TEXT,
                     ad_type TEXT NOT NULL CHECK(ad_type IN ('buy', 'sell')),
                     category TEXT NOT NULL,
                     description TEXT NOT NULL,
@@ -102,6 +104,7 @@ class Database:
                     ad_id INTEGER NOT NULL,
                     user_id INTEGER NOT NULL,
                     username TEXT,
+                    author_name TEXT,
                     ad_type TEXT NOT NULL,
                     category TEXT NOT NULL,
                     description TEXT NOT NULL,
@@ -159,6 +162,13 @@ class Database:
                     ON ui_messages(chat_id);
                 """
             )
+            self._ensure_column(conn, "market", "author_name", "TEXT")
+            self._ensure_column(conn, "hist_market", "author_name", "TEXT")
+
+    def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, column_type: str) -> None:
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
     def expired_active_ad_ids(self, retention_days: int) -> list[int]:
         cutoff = _start_of_day(datetime.now()) - timedelta(days=retention_days)
@@ -181,15 +191,16 @@ class Database:
                 conn.execute(
                     """
                     INSERT INTO hist_market (
-                        ad_id, user_id, username, ad_type, category, description, price, address,
+                        ad_id, user_id, username, author_name, ad_type, category, description, price, address,
                         created_at, removed_at, remove_reason
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         row["id"],
                         row["user_id"],
                         row["username"],
+                        row["author_name"],
                         row["ad_type"],
                         row["category"],
                         row["description"],
@@ -456,6 +467,7 @@ class Database:
         *,
         user_id: int,
         username: str | None,
+        author_name: str | None,
         ad_type: str,
         category: str,
         description: str,
@@ -467,10 +479,12 @@ class Database:
         with self.connect() as conn:
             cursor = conn.execute(
                 """
-                INSERT INTO market (user_id, username, ad_type, category, description, price, address, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO market (
+                    user_id, username, author_name, ad_type, category, description, price, address, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (user_id, username, ad_type, category, description, price, address, now),
+                (user_id, username, author_name, ad_type, category, description, price, address, now),
             )
             ad_id = int(cursor.lastrowid)
             for file_id, file_unique_id, image_hash in photos or []:
@@ -507,15 +521,16 @@ class Database:
             conn.execute(
                 """
                 INSERT INTO hist_market (
-                    ad_id, user_id, username, ad_type, category, description, price, address,
+                    ad_id, user_id, username, author_name, ad_type, category, description, price, address,
                     created_at, removed_at, remove_reason
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row["id"],
                     row["user_id"],
                     row["username"],
+                    row["author_name"],
                     row["ad_type"],
                     row["category"],
                     row["description"],
@@ -562,6 +577,7 @@ def _ad_from_row(row: sqlite3.Row) -> Ad:
         id=int(row["id"]),
         user_id=int(row["user_id"]),
         username=row["username"],
+        author_name=row["author_name"],
         ad_type=str(row["ad_type"]),
         category=str(row["category"]),
         description=str(row["description"]),

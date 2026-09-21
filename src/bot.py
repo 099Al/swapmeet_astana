@@ -10,7 +10,7 @@ from typing import Union
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -488,6 +488,7 @@ def build_router(ctx: AppContext) -> Router:
         ad_id = ctx.db.create_ad(
             user_id=callback.from_user.id,
             username=callback.from_user.username,
+            author_name=telegram_display_name(callback.from_user.full_name),
             ad_type="sell",
             category=data["category"],
             description=data["description"],
@@ -524,6 +525,7 @@ def build_router(ctx: AppContext) -> Router:
         ad_id = ctx.db.create_ad(
             user_id=callback.from_user.id,
             username=callback.from_user.username,
+            author_name=telegram_display_name(callback.from_user.full_name),
             ad_type="buy",
             category=data["category"],
             description=data["description"],
@@ -816,6 +818,8 @@ def build_router(ctx: AppContext) -> Router:
     async def reply_command(message: Message) -> None:
         saved_message = ctx.db.ad_message_by_message_id(message.chat.id, message.reply_to_message.message_id)
         if saved_message is None:
+            if is_publication_chat(message, ctx):
+                await safe_delete(message)
             return
         ad = ctx.db.get_ad(saved_message.ad_id)
         if ad is None or ad.status != "active":
@@ -832,6 +836,9 @@ def build_router(ctx: AppContext) -> Router:
     async def fallback(message: Message) -> None:
         if message.chat.type == "private":
             await message.answer("Выберите действие в меню.", reply_markup=private_main_menu(message))
+            return
+        if is_publication_chat(message, ctx):
+            await safe_delete(message)
 
     return router
 
@@ -859,6 +866,7 @@ async def finish_buy_ad(message: Message, state: FSMContext, ctx: AppContext) ->
     ad_id = ctx.db.create_ad(
         user_id=message.from_user.id,
         username=message.from_user.username,
+        author_name=telegram_display_name(message.from_user.full_name),
         ad_type="buy",
         category=data["category"],
         description=data["description"],
@@ -1153,10 +1161,12 @@ def render_ad(ad: Ad) -> str:
 
 
 def render_author(ad: Ad) -> str:
+    if ad.author_name:
+        return f"Автор: {html.escape(ad.author_name)}"
     if ad.username:
         username = ad.username.lstrip("@")
-        return f'Автор: <a href="https://t.me/{html.escape(username)}">@{html.escape(username)}</a>'
-    return f'Автор: <a href="tg://user?id={ad.user_id}">профиль Telegram</a>'
+        return f"Автор: @{html.escape(username)}"
+    return "Автор: username не указан"
 
 
 async def refresh_known_messages(bot: Bot, ctx: AppContext, ad_id: int) -> None:
@@ -1250,6 +1260,20 @@ def can_remove_ad(ctx: AppContext, user_id: int, ad: Ad) -> bool:
     return ad.user_id == user_id or ctx.db.is_admin(user_id)
 
 
+def telegram_display_name(full_name: str | None) -> str | None:
+    full_name = (full_name or "").strip()
+    return full_name or None
+
+
+def is_publication_chat(message: Message, ctx: AppContext) -> bool:
+    publication_chat_id = ctx.settings.publication_chat_id
+    if isinstance(publication_chat_id, int):
+        return message.chat.id == publication_chat_id
+    publication_username = publication_chat_id.lstrip("@").lower()
+    chat_username = (message.chat.username or "").lower()
+    return bool(publication_username and chat_username == publication_username)
+
+
 async def reserve_ad(message: Message, ctx: AppContext, ad: Ad, delete_command_message: bool = False) -> None:
     if ad.status != "active":
         if not delete_command_message:
@@ -1294,7 +1318,7 @@ async def release_reserve_ad(message: Message, ctx: AppContext, ad: Ad) -> None:
 async def safe_delete(message: Message) -> None:
     try:
         await message.delete()
-    except TelegramBadRequest:
+    except (TelegramBadRequest, TelegramForbiddenError):
         return
 
 
