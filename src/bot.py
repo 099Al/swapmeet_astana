@@ -11,7 +11,7 @@ from typing import Union
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, CallbackQuery, InputMediaPhoto, Message
@@ -88,6 +88,18 @@ def build_router(ctx: AppContext) -> Router:
             "Категории используются только при создании объявления.",
             reply_markup=private_main_menu(message),
         )
+
+    @router.message(Command("add_admin"))
+    async def add_admin(message: Message) -> None:
+        if message.from_user is None or not ctx.db.can_manage_admins(message.from_user.id):
+            await message.answer("Недостаточно прав.")
+            return
+        admin_id = admin_id_from_message(message)
+        if admin_id is None:
+            await message.answer("Укажите user_id: /add_admin 123456789 или ответьте командой на сообщение пользователя.")
+            return
+        ctx.db.upsert_admin(admin_id)
+        await message.answer(f"Админ добавлен: {admin_id}")
 
     deps = SimpleNamespace(
         CreateAd=CreateAd,
@@ -589,6 +601,17 @@ def ad_from_number_text(ctx: AppContext, text: str) -> Ad | None:
     return ctx.db.get_ad(int(digits))
 
 
+def admin_id_from_message(message: Message) -> int | None:
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) == 2:
+        value = parts[1].strip()
+        if value.isdigit():
+            return int(value)
+    if message.reply_to_message and message.reply_to_message.from_user:
+        return message.reply_to_message.from_user.id
+    return None
+
+
 def normalize_command(text: str) -> str:
     return "".join(ch.lower() for ch in text if ch.isalpha())
 
@@ -761,7 +784,7 @@ async def run() -> None:
     db = Database(settings.database_path)
     db.init()
     for admin_id in settings.admin_ids:
-        db.upsert_admin(admin_id)
+        db.upsert_admin(admin_id, can_manage_admins=True)
 
     bot = Bot(settings.bot_token)
     await bot.set_my_commands(

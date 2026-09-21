@@ -129,6 +129,7 @@ class Database:
                 CREATE TABLE IF NOT EXISTS admins (
                     user_id INTEGER PRIMARY KEY,
                     username TEXT,
+                    can_manage_admins INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL
                 );
 
@@ -186,6 +187,7 @@ class Database:
             )
             self._ensure_column(conn, "market", "author_name", "TEXT")
             self._ensure_column(conn, "hist_market", "author_name", "TEXT")
+            self._ensure_column(conn, "admins", "can_manage_admins", "INTEGER NOT NULL DEFAULT 0")
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, column_type: str) -> None:
         columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
@@ -412,22 +414,35 @@ class Database:
         with self.connect() as conn:
             conn.execute("DELETE FROM ad_messages WHERE chat_id = ?", (chat_id,))
 
-    def upsert_admin(self, user_id: int, username: str | None = None) -> None:
+    def upsert_admin(self, user_id: int, username: str | None = None, *, can_manage_admins: bool = False) -> None:
         now = datetime.now().isoformat(timespec="seconds")
         with self.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO admins (user_id, username, created_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT(user_id) DO UPDATE SET username = excluded.username
+                INSERT INTO admins (user_id, username, can_manage_admins, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    username = excluded.username,
+                    can_manage_admins = CASE
+                        WHEN excluded.can_manage_admins = 1 THEN 1
+                        ELSE admins.can_manage_admins
+                    END
                 """,
-                (user_id, username, now),
+                (user_id, username, int(can_manage_admins), now),
             )
 
     def is_admin(self, user_id: int) -> bool:
         with self.connect() as conn:
             row = conn.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,)).fetchone()
         return row is not None
+
+    def can_manage_admins(self, user_id: int) -> bool:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT can_manage_admins FROM admins WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+        return row is not None and int(row["can_manage_admins"]) == 1
 
     def block_user(self, user_id: int, reason: str, duration_days: int = 30) -> None:
         blocked_at_dt = datetime.now()
