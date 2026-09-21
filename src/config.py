@@ -12,6 +12,8 @@ class Settings:
     bot_token: str
     database_path: str = "swapmeet_astana.sqlite3"
     publication_chat_id: str | int = "@swapmeet_astana"
+    communication_topic_id: int | None = None
+    communication_daily_message_limit: int = 20
     buy_daily_limit: int = 2
     user_daily_ad_limit: int = 10
     user_hourly_ad_limit: int = 5
@@ -39,6 +41,8 @@ def load_settings() -> Settings:
         bot_token=token,
         database_path=database_path,
         publication_chat_id=_get_chat_id(os.getenv("PUBLICATION_CHAT_ID", "@swapmeet_astana")),
+        communication_topic_id=_get_optional_int("COMMUNICATION_TOPIC_ID"),
+        communication_daily_message_limit=_get_int("COMMUNICATION_DAILY_MESSAGE_LIMIT", 20),
         buy_daily_limit=_get_int("BUY_DAILY_LIMIT", 2),
         user_daily_ad_limit=_get_int("USER_DAILY_AD_LIMIT", 10),
         user_hourly_ad_limit=_get_int("USER_HOURLY_AD_LIMIT", 5),
@@ -61,6 +65,13 @@ def _get_int_list(name: str) -> tuple[int, ...]:
     if not value:
         return ()
     return tuple(int(item.strip()) for item in value.split(",") if item.strip())
+
+
+def _get_optional_int(name: str) -> int | None:
+    value = os.getenv(name, "").strip()
+    if not value:
+        return None
+    return int(value)
 
 
 def _get_chat_id(value: str) -> str | int:

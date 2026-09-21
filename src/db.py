@@ -148,6 +148,16 @@ class Database:
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS communication_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    chat_id INTEGER NOT NULL,
+                    message_id INTEGER NOT NULL,
+                    message_thread_id INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(chat_id, message_id)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_market_active_created
                     ON market(status, created_at);
                 CREATE INDEX IF NOT EXISTS idx_market_user_created
@@ -160,6 +170,8 @@ class Database:
                     ON ad_messages(chat_id);
                 CREATE INDEX IF NOT EXISTS idx_ui_messages_chat
                     ON ui_messages(chat_id);
+                CREATE INDEX IF NOT EXISTS idx_communication_messages_user_created
+                    ON communication_messages(user_id, created_at);
                 """
             )
             self._ensure_column(conn, "market", "author_name", "TEXT")
@@ -453,6 +465,36 @@ class Database:
                     "SELECT COUNT(*) FROM market WHERE user_id = ? AND created_at >= ?",
                     (user_id, start),
                 ).fetchone()[0]
+            )
+
+    def count_user_communication_messages_today(self, user_id: int) -> int:
+        start = _start_of_day(datetime.now()).isoformat()
+        with self.connect() as conn:
+            return int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM communication_messages WHERE user_id = ? AND created_at >= ?",
+                    (user_id, start),
+                ).fetchone()[0]
+            )
+
+    def save_communication_message(
+        self,
+        *,
+        user_id: int,
+        chat_id: int,
+        message_id: int,
+        message_thread_id: int,
+    ) -> None:
+        now = datetime.now().isoformat(timespec="seconds")
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO communication_messages (
+                    user_id, chat_id, message_id, message_thread_id, created_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (user_id, chat_id, message_id, message_thread_id, now),
             )
 
     def find_duplicate_hash(

@@ -132,7 +132,7 @@ def build_router(ctx: AppContext) -> Router:
         saved_message = ctx.db.ad_message_by_message_id(message.chat.id, message.reply_to_message.message_id)
         if saved_message is None:
             if is_publication_chat(message, ctx):
-                await safe_delete(message)
+                await handle_publication_chat_message(message, ctx)
             return
         ad = ctx.db.get_ad(saved_message.ad_id)
         if ad is None or ad.status != "active":
@@ -164,7 +164,7 @@ def build_router(ctx: AppContext) -> Router:
             await message.answer("Выберите действие в меню.", reply_markup=private_main_menu(message))
             return
         if is_publication_chat(message, ctx):
-            await safe_delete(message)
+            await handle_publication_chat_message(message, ctx)
 
     return router
 
@@ -602,6 +602,29 @@ def is_publication_chat(message: Message, ctx: AppContext) -> bool:
     publication_username = publication_chat_id.lstrip("@").lower()
     chat_username = (message.chat.username or "").lower()
     return bool(publication_username and chat_username == publication_username)
+
+
+def is_communication_topic_message(message: Message, ctx: AppContext) -> bool:
+    topic_id = ctx.settings.communication_topic_id
+    return topic_id is not None and getattr(message, "message_thread_id", None) == topic_id
+
+
+async def handle_publication_chat_message(message: Message, ctx: AppContext) -> None:
+    if message.from_user is None or message.from_user.is_bot:
+        await safe_delete(message)
+        return
+    if not is_communication_topic_message(message, ctx):
+        await safe_delete(message)
+        return
+    if ctx.db.count_user_communication_messages_today(message.from_user.id) >= ctx.settings.communication_daily_message_limit:
+        await safe_delete(message)
+        return
+    ctx.db.save_communication_message(
+        user_id=message.from_user.id,
+        chat_id=message.chat.id,
+        message_id=message.message_id,
+        message_thread_id=message.message_thread_id,
+    )
 
 
 async def reserve_ad(message: Message, ctx: AppContext, ad: Ad, delete_command_message: bool = False) -> None:
