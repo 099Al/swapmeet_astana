@@ -134,8 +134,14 @@ def build_router(ctx: AppContext) -> Router:
             if is_publication_chat(message, ctx):
                 await handle_publication_chat_message(message, ctx)
             return
+        if message.from_user is not None and ctx.db.is_admin(message.from_user.id):
+            return
+        if message.from_user is not None and ctx.db.is_user_blocked(message.from_user.id):
+            await safe_delete(message)
+            return
         ad = ctx.db.get_ad(saved_message.ad_id)
         if ad is None or ad.status != "active":
+            await send_chat_rules(message.bot, message, ctx)
             await safe_delete(message)
             return
 
@@ -143,6 +149,7 @@ def build_router(ctx: AppContext) -> Router:
         if command in {"бронь", "забронировать"}:
             await reserve_ad(message, ctx, ad, delete_command_message=True)
             return
+        await send_chat_rules(message.bot, message, ctx)
         await safe_delete(message)
 
     @router.message()
@@ -615,7 +622,11 @@ async def handle_publication_chat_message(message: Message, ctx: AppContext) -> 
         return
     if ctx.db.is_admin(message.from_user.id):
         return
+    if ctx.db.is_user_blocked(message.from_user.id):
+        await safe_delete(message)
+        return
     if not is_communication_topic_message(message, ctx):
+        await send_chat_rules(message.bot, message, ctx)
         await safe_delete(message)
         return
     if ctx.db.count_user_communication_messages_today(message.from_user.id) >= ctx.settings.communication_daily_message_limit:
@@ -627,6 +638,33 @@ async def handle_publication_chat_message(message: Message, ctx: AppContext) -> 
         message_id=message.message_id,
         message_thread_id=message.message_thread_id,
     )
+
+
+async def send_chat_rules(bot: Bot, message: Message, ctx: AppContext) -> None:
+    if message.from_user is None:
+        return
+    try:
+        await bot.send_message(
+            chat_id=message.from_user.id,
+            text=(
+                "Правила чата:\n\n"
+                "1. Размещайте объявления через бота: /place или кнопка «Разместить объявление».\n"
+                "2. Для редактирования используйте /edit или кнопку «Редактировать».\n"
+                "3. Для снятия объявления используйте /remove или кнопку «Снять объявление».\n"
+                "4. Бронь ставится ответом на объявление словом «Бронь» или через кнопку «Забронировать».\n"
+                "5. Общение пользователей разрешено только в теме «Общение».\n"
+                "6. Лимиты: не больше 5 объявлений в час, общий суточный лимит объявлений и до 20 сообщений "
+                "в теме «Общение» в сутки."
+            ),
+        )
+    except TelegramForbiddenError:
+        ctx.db.block_user(
+            message.from_user.id,
+            "Пользователь запретил боту отправлять личные сообщения",
+            duration_days=30,
+        )
+    except TelegramBadRequest:
+        return
 
 
 async def reserve_ad(message: Message, ctx: AppContext, ad: Ad, delete_command_message: bool = False) -> None:

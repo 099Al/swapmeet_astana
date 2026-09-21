@@ -158,6 +158,14 @@ class Database:
                     UNIQUE(chat_id, message_id)
                 );
 
+                CREATE TABLE IF NOT EXISTS user_blocks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    reason TEXT NOT NULL,
+                    blocked_at TEXT NOT NULL,
+                    blocked_until TEXT NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_market_active_created
                     ON market(status, created_at);
                 CREATE INDEX IF NOT EXISTS idx_market_user_created
@@ -172,6 +180,8 @@ class Database:
                     ON ui_messages(chat_id);
                 CREATE INDEX IF NOT EXISTS idx_communication_messages_user_created
                     ON communication_messages(user_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_user_blocks_user_until
+                    ON user_blocks(user_id, blocked_until);
                 """
             )
             self._ensure_column(conn, "market", "author_name", "TEXT")
@@ -417,6 +427,38 @@ class Database:
     def is_admin(self, user_id: int) -> bool:
         with self.connect() as conn:
             row = conn.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,)).fetchone()
+        return row is not None
+
+    def block_user(self, user_id: int, reason: str, duration_days: int = 30) -> None:
+        blocked_at_dt = datetime.now()
+        blocked_until_dt = blocked_at_dt + timedelta(days=duration_days)
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO user_blocks (user_id, reason, blocked_at, blocked_until)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    user_id,
+                    reason,
+                    blocked_at_dt.isoformat(timespec="seconds"),
+                    blocked_until_dt.isoformat(timespec="seconds"),
+                ),
+            )
+
+    def is_user_blocked(self, user_id: int) -> bool:
+        now = datetime.now().isoformat(timespec="seconds")
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1
+                FROM user_blocks
+                WHERE user_id = ? AND blocked_until > ?
+                ORDER BY blocked_until DESC
+                LIMIT 1
+                """,
+                (user_id, now),
+            ).fetchone()
         return row is not None
 
     def save_ui_message(self, *, chat_id: int, message_id: int, message_kind: str) -> None:
