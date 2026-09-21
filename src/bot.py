@@ -33,7 +33,6 @@ from keyboards import (
 
 MAX_BUY_DESCRIPTION = 500
 MAX_SELL_PHOTOS = 6
-PUBLIC_NUMBER_OFFSET = 99999
 RETENTION_CLEANUP_JOB = "retention_cleanup"
 RETENTION_CLEANUP_TIME = time(hour=1)
 ChatId = Union[int, str]
@@ -572,19 +571,15 @@ def has_duplicate_in_batch(hashes: list[str], max_distance: int = 8) -> bool:
     return False
 
 
-def public_ad_number(ad_id: int) -> int:
-    return ad_id + PUBLIC_NUMBER_OFFSET
-
-
 def format_public_ad_number(ad_id: int) -> str:
-    return f"{public_ad_number(ad_id):,}".replace(",", " ")
+    return str(ad_id)
 
 
 def ad_from_number_text(ctx: AppContext, text: str) -> Ad | None:
     digits = "".join(ch for ch in text if ch.isdigit())
     if not digits:
         return None
-    return ctx.db.get_ad_by_public_number(int(digits))
+    return ctx.db.get_ad(int(digits))
 
 
 def normalize_command(text: str) -> str:

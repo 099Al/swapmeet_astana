@@ -247,12 +247,6 @@ class Database:
             row = conn.execute("SELECT * FROM market WHERE id = ?", (ad_id,)).fetchone()
         return _ad_from_row(row) if row else None
 
-    def get_ad_by_public_number(self, public_number: int) -> Ad | None:
-        ad_id = public_number - 99999
-        if ad_id < 1:
-            return None
-        return self.get_ad(ad_id)
-
     def ad_photos(self, ad_id: int) -> list[str]:
         with self.connect() as conn:
             rows = conn.execute("SELECT file_id FROM market_photos WHERE ad_id = ? ORDER BY id", (ad_id,)).fetchall()
