@@ -468,10 +468,12 @@ def render_ad(ad: Ad) -> str:
 
 def render_author(ad: Ad) -> str:
     if ad.author_name:
-        return f"Автор: {html.escape(ad.author_name)}"
+        author_name = html.escape(ad.author_name)
+        return f'Автор: <a href="tg://user?id={ad.user_id}">{author_name}</a>'
     if ad.username:
         username = ad.username.lstrip("@")
-        return f"Автор: @{html.escape(username)}"
+        escaped_username = html.escape(username)
+        return f'Автор: <a href="https://t.me/{escaped_username}">@{escaped_username}</a>'
     return "Автор: username не указан"
 
 
