@@ -4,46 +4,29 @@ import asyncio
 import html
 import logging
 from contextlib import suppress
-from dataclasses import dataclass
 from datetime import datetime, time, timedelta
+from types import SimpleNamespace
 from typing import Union
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
-from aiogram.filters import Command, CommandStart
-from aiogram.filters import StateFilter
+from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, CallbackQuery, InputMediaPhoto, Message
 from aiogram.utils.markdown import hbold
 
-from config import Settings, load_settings
+from config import load_settings
+from context import AppContext, CreateAd
 from db import Ad, Database
-from images import dhash
+from handlers import register_reply_menu_handlers
 from keyboards import (
     BTN_BACK,
-    BTN_BUY,
-    BTN_CREATE,
-    BTN_EDIT_AD,
-    BTN_RELEASE_RESERVE,
-    BTN_REMOVE_AD,
-    BTN_RESERVE,
-    BTN_SELL,
-    BTN_SKIP_PHOTOS,
     CATEGORIES,
     CATEGORY_ALL,
-    buy_categories_inline_menu,
-    create_inline_menu,
-    edit_next_finish_keyboard,
-    edit_finish_keyboard,
-    edit_photo_delete_keyboard,
-    edit_photo_menu,
     main_menu,
-    remove_reason_keyboard,
     sell_categories_inline_menu,
-    sell_confirm_keyboard,
     sell_photo_inline_menu,
     wizard_back_keyboard,
 )
@@ -54,35 +37,6 @@ PUBLIC_NUMBER_OFFSET = 99999
 RETENTION_CLEANUP_JOB = "retention_cleanup"
 RETENTION_CLEANUP_TIME = time(hour=1)
 ChatId = Union[int, str]
-
-
-class CreateAd(StatesGroup):
-    buy_description = State()
-    buy_category = State()
-    buy_photos = State()
-    buy_confirm = State()
-    sell_category = State()
-    sell_description = State()
-    sell_price = State()
-    sell_address = State()
-    sell_photos = State()
-    sell_confirm = State()
-    reserve_number = State()
-    release_reserve_number = State()
-    remove_ad_number = State()
-    edit_number = State()
-    edit_description = State()
-    edit_photo_menu = State()
-    edit_add_photo = State()
-    edit_delete_photo = State()
-    edit_price = State()
-    edit_address = State()
-
-
-@dataclass
-class AppContext:
-    settings: Settings
-    db: Database
 
 
 def private_main_menu(message: Message):
@@ -136,744 +90,42 @@ def build_router(ctx: AppContext) -> Router:
             reply_markup=private_main_menu(message),
         )
 
-    @router.message(Command("place", "create", "post"))
-    @router.message(F.text == BTN_CREATE)
-    async def create(message: Message) -> None:
-        if message.chat.type != "private":
-            return
-        await message.answer("Что хотите сделать?", reply_markup=create_inline_menu())
-
-    @router.callback_query(F.data == "create:buy")
-    async def buy_start_inline(callback: CallbackQuery, state: FSMContext) -> None:
-        if not await ensure_private_callback(callback):
-            return
-        if await is_hourly_limit_exceeded_callback(callback, ctx):
-            await callback.answer(hourly_limit_message(ctx), show_alert=True)
-            return
-        if await is_daily_limit_exceeded_callback(callback, ctx, ad_type="buy", limit=ctx.settings.buy_daily_limit):
-            await callback.answer("Превышен суточный лимит объявлений на покупку.", show_alert=True)
-            return
-        if await is_daily_limit_exceeded_callback(callback, ctx, ad_type=None, limit=ctx.settings.user_daily_ad_limit):
-            await callback.answer("Превышен суточный лимит объявлений.", show_alert=True)
-            return
-        await state.set_data({"photos": [], "wizard_message_ids": [], "wizard_user_message_ids": []})
-        await state.set_state(CreateAd.buy_category)
-        await safe_delete(callback.message)
-        await callback.message.answer("Укажите категорию:", reply_markup=buy_categories_inline_menu())
-        await callback.answer()
-
-    @router.callback_query(F.data == "create:sell")
-    async def sell_start_inline(callback: CallbackQuery, state: FSMContext) -> None:
-        if not await ensure_private_callback(callback):
-            return
-        if await is_hourly_limit_exceeded_callback(callback, ctx):
-            await callback.answer(hourly_limit_message(ctx), show_alert=True)
-            return
-        if await is_daily_limit_exceeded_callback(callback, ctx, ad_type=None, limit=ctx.settings.user_daily_ad_limit):
-            await callback.answer("Превышен суточный лимит объявлений.", show_alert=True)
-            return
-        await state.set_data({"photos": [], "wizard_message_ids": [], "wizard_user_message_ids": []})
-        await ask_sell_category(callback.message, state)
-        await callback.answer()
-
-    @router.message(F.text == BTN_BUY)
-    async def buy_start(message: Message, state: FSMContext) -> None:
-        if message.chat.type != "private":
-            return
-        if await is_hourly_limit_exceeded(message, ctx):
-            await message.answer(hourly_limit_message(ctx))
-            return
-        if await is_daily_limit_exceeded(message, ctx, ad_type="buy", limit=ctx.settings.buy_daily_limit):
-            await message.answer("Превышен суточный лимит объявлений на покупку.")
-            return
-        if await is_daily_limit_exceeded(message, ctx, ad_type=None, limit=ctx.settings.user_daily_ad_limit):
-            await message.answer("Превышен суточный лимит объявлений.")
-            return
-        await state.set_data({"photos": [], "wizard_message_ids": [], "wizard_user_message_ids": []})
-        await state.set_state(CreateAd.buy_category)
-        await message.answer("Укажите категорию:", reply_markup=buy_categories_inline_menu())
-
-    @router.message(StateFilter(CreateAd.buy_description))
-    async def buy_description(message: Message, state: FSMContext) -> None:
-        if is_forwarded(message):
-            await message.answer("Пересланные объявления внутри бота не допускаются.")
-            return
-        text = (message.text or "").strip()
-        if not text:
-            await message.answer("Отправьте описание текстом.")
-            return
-        if len(text) > MAX_BUY_DESCRIPTION:
-            await message.answer("Описание должно быть не больше 500 символов.")
-            return
-        await state.update_data(description=text)
-        await state.set_state(CreateAd.buy_confirm)
-        await send_wizard_message(
-            message,
-            state,
-            "Опубликовать?",
-            reply_markup=sell_confirm_keyboard(callback_prefix="buy_confirm"),
-        )
-
-    @router.message(StateFilter(CreateAd.buy_photos), F.photo)
-    async def buy_photo(message: Message, state: FSMContext, bot: Bot) -> None:
-        if is_forwarded(message):
-            await message.answer("Пересланные объявления внутри бота не допускаются.")
-            return
-        photo = message.photo[-1]
-        file = await bot.get_file(photo.file_id)
-        stream = await bot.download_file(file.file_path)
-        if stream is None:
-            await message.answer("Не удалось скачать фото, попробуйте другое.")
-            return
-        image_hash = dhash(stream.read())
-        data = await state.get_data()
-        photos: list[tuple[str, str, str]] = data.get("photos", [])
-        if len(photos) >= MAX_SELL_PHOTOS:
-            await ask_buy_description(message, state)
-            return
-        photos.append((photo.file_id, photo.file_unique_id, image_hash))
-        await remember_wizard_user_message(state, message.message_id)
-        await state.update_data(photos=photos)
-        if len(photos) >= MAX_SELL_PHOTOS:
-            await ask_buy_description(message, state)
-            return
-        await send_wizard_message(
-            message,
-            state,
-            render_sell_photo_prompt(len(photos)),
-            reply_markup=sell_photo_inline_menu(has_photos=True),
-        )
-
-    @router.message(StateFilter(CreateAd.buy_photos), F.text == BTN_SKIP_PHOTOS)
-    async def finish_buy_photos(message: Message, state: FSMContext) -> None:
-        await ask_buy_description(message, state)
-
-    @router.message(F.text == BTN_SELL)
-    async def sell_start(message: Message, state: FSMContext) -> None:
-        if message.chat.type != "private":
-            return
-        if await is_hourly_limit_exceeded(message, ctx):
-            await message.answer(hourly_limit_message(ctx))
-            return
-        if await is_daily_limit_exceeded(message, ctx, ad_type=None, limit=ctx.settings.user_daily_ad_limit):
-            await message.answer("Превышен суточный лимит объявлений.")
-            return
-        await state.set_data({"photos": [], "wizard_message_ids": [], "wizard_user_message_ids": []})
-        await ask_sell_category(message, state)
-
-    @router.message(StateFilter(CreateAd.sell_description))
-    async def sell_description(message: Message, state: FSMContext) -> None:
-        if is_forwarded(message):
-            await message.answer("Пересланные объявления внутри бота не допускаются.")
-            return
-        text = (message.text or "").strip()
-        if not text:
-            await message.answer("Отправьте описание текстом.")
-            return
-        await remember_wizard_user_message(state, message.message_id)
-        await state.update_data(description=text)
-        await state.set_state(CreateAd.sell_price)
-        await send_wizard_message(
-            message,
-            state,
-            "Укажите цену",
-            reply_markup=wizard_back_keyboard("description"),
-        )
-
-    @router.message(StateFilter(CreateAd.sell_price))
-    async def sell_price(message: Message, state: FSMContext) -> None:
-        text = (message.text or "").strip()
-        if not text:
-            await message.answer("Цена обязательна. Укажите цену, бесплатно или обмен.")
-            return
-        await remember_wizard_user_message(state, message.message_id)
-        await state.update_data(price=text)
-        await state.set_state(CreateAd.sell_address)
-        await send_wizard_message(
-            message,
-            state,
-            "Укажите Адресс",
-            reply_markup=wizard_back_keyboard("price"),
-        )
-
-    @router.message(StateFilter(CreateAd.sell_address))
-    async def finish_sell(message: Message, state: FSMContext) -> None:
-        text = (message.text or "").strip()
-        if not text:
-            await message.answer("Адрес обязателен.")
-            return
-        await remember_wizard_user_message(state, message.message_id)
-        await state.update_data(address=text)
-        await state.set_state(CreateAd.sell_confirm)
-        await send_wizard_message(
-            message,
-            state,
-            "Опубликовать?",
-            reply_markup=sell_confirm_keyboard(),
-        )
-
-    @router.message(StateFilter(CreateAd.sell_photos), F.photo)
-    async def sell_photo(message: Message, state: FSMContext, bot: Bot) -> None:
-        if is_forwarded(message):
-            await message.answer("Пересланные объявления внутри бота не допускаются.")
-            return
-        photo = message.photo[-1]
-        file = await bot.get_file(photo.file_id)
-        stream = await bot.download_file(file.file_path)
-        if stream is None:
-            await message.answer("Не удалось скачать фото, попробуйте другое.")
-            return
-        image_hash = dhash(stream.read())
-        data = await state.get_data()
-        photos: list[tuple[str, str, str]] = data.get("photos", [])
-        if len(photos) >= MAX_SELL_PHOTOS:
-            await ask_sell_description_from_state(message, state)
-            return
-        photos.append((photo.file_id, photo.file_unique_id, image_hash))
-        await remember_wizard_user_message(state, message.message_id)
-        await state.update_data(photos=photos)
-        if len(photos) >= MAX_SELL_PHOTOS:
-            await ask_sell_description_from_state(message, state)
-            return
-        await send_wizard_message(
-            message,
-            state,
-            render_sell_photo_prompt(len(photos)),
-            reply_markup=sell_photo_inline_menu(has_photos=True),
-        )
-
-    @router.message(StateFilter(CreateAd.sell_photos), F.text == BTN_SKIP_PHOTOS)
-    async def finish_sell_photos(message: Message, state: FSMContext) -> None:
-        data = await state.get_data()
-        photos: list[tuple[str, str, str]] = data.get("photos", [])
-        if has_duplicate_in_batch([item[2] for item in photos]):
-            await state.clear()
-            await message.answer(
-                "Создание отклонено: среди загруженных фото есть повтор.",
-                reply_markup=private_main_menu(message),
-            )
-            return
-        duplicate_ad_id = ctx.db.find_duplicate_hash(
-            message.from_user.id,
-            [item[2] for item in photos],
-            ctx.settings.duplicate_photo_days,
-        )
-        if duplicate_ad_id is not None:
-            await state.clear()
-            await message.answer(
-                f"Создание отклонено: похожее фото уже было в объявлении #{duplicate_ad_id} за последние "
-                f"{ctx.settings.duplicate_photo_days} дней.",
-                reply_markup=private_main_menu(message),
-            )
-            return
-        await ask_sell_description_from_state(message, state)
-
-    @router.message(StateFilter(CreateAd.sell_photos), F.text)
-    async def sell_description_without_button(message: Message, state: FSMContext) -> None:
-        if is_forwarded(message):
-            await message.answer("Пересланные объявления внутри бота не допускаются.")
-            return
-        text = (message.text or "").strip()
-        if not text:
-            await message.answer("Отправьте описание текстом.")
-            return
-        data = await state.get_data()
-        photos: list[tuple[str, str, str]] = data.get("photos", [])
-        if has_duplicate_in_batch([item[2] for item in photos]):
-            await state.clear()
-            await message.answer(
-                "Создание отклонено: среди загруженных фото есть повтор.",
-                reply_markup=private_main_menu(message),
-            )
-            return
-        duplicate_ad_id = ctx.db.find_duplicate_hash(
-            message.from_user.id,
-            [item[2] for item in photos],
-            ctx.settings.duplicate_photo_days,
-        )
-        if duplicate_ad_id is not None:
-            await state.clear()
-            await message.answer(
-                f"Создание отклонено: похожее фото уже было в объявлении #{duplicate_ad_id} за последние "
-                f"{ctx.settings.duplicate_photo_days} дней.",
-                reply_markup=private_main_menu(message),
-            )
-            return
-        await remember_wizard_user_message(state, message.message_id)
-        await state.update_data(description=text)
-        await state.set_state(CreateAd.sell_price)
-        await send_wizard_message(
-            message,
-            state,
-            "Укажите цену",
-            reply_markup=wizard_back_keyboard("description"),
-        )
-
-    @router.callback_query(F.data.startswith("sell_photos:"))
-    async def finish_sell_photos_inline(callback: CallbackQuery, state: FSMContext) -> None:
-        if not await ensure_private_callback(callback):
-            return
-        action = callback.data.split(":", 1)[1]
-        current_state = await state.get_state()
-        data = await state.get_data()
-        photos: list[tuple[str, str, str]] = data.get("photos", [])
-        if action == "skip":
-            photos = []
-            await state.update_data(photos=photos)
-        if action == "description" and not photos:
-            await callback.answer("Сначала добавьте фото или перейдите к описанию без фото.", show_alert=True)
-            return
-        if has_duplicate_in_batch([item[2] for item in photos]):
-            await reset_sell_wizard(callback.bot, callback.message.chat.id, state)
-            await callback.message.answer(
-                "Создание отклонено: среди загруженных фото есть повтор.",
-                reply_markup=private_main_menu(callback.message),
-            )
-            await callback.answer()
-            return
-        duplicate_ad_id = ctx.db.find_duplicate_hash(
-            callback.from_user.id,
-            [item[2] for item in photos],
-            ctx.settings.duplicate_photo_days,
-        )
-        if duplicate_ad_id is not None:
-            await reset_sell_wizard(callback.bot, callback.message.chat.id, state)
-            await callback.message.answer(
-                f"Создание отклонено: похожее фото уже было в объявлении #{duplicate_ad_id} за последние "
-                f"{ctx.settings.duplicate_photo_days} дней.",
-                reply_markup=private_main_menu(callback.message),
-            )
-            await callback.answer()
-            return
-        if current_state == CreateAd.buy_photos.state:
-            await ask_buy_description(callback.message, state)
-        else:
-            await ask_sell_description_from_state(callback.message, state)
-        await callback.answer()
-
-    @router.callback_query(F.data.startswith("sell_category:"))
-    async def sell_category_inline(callback: CallbackQuery, state: FSMContext) -> None:
-        if not await ensure_private_callback(callback):
-            return
-        category = callback.data.split(":", 1)[1]
-        await state.update_data(category=category)
-        await ask_sell_photos(callback.message, state)
-        await callback.answer()
-
-    @router.callback_query(F.data.startswith("buy_category:"))
-    async def buy_category_inline(callback: CallbackQuery, state: FSMContext) -> None:
-        if not await ensure_private_callback(callback):
-            return
-        category = callback.data.split(":", 1)[1]
-        await state.update_data(category=category)
-        await ask_buy_photos(callback.message, state)
-        await callback.answer()
-
-    @router.callback_query(F.data.startswith("sell_back:"))
-    async def sell_back(callback: CallbackQuery, state: FSMContext) -> None:
-        if not await ensure_private_callback(callback):
-            return
-        target = callback.data.split(":", 1)[1]
-        data = await state.get_data()
-        if target == "create":
-            await reset_sell_wizard(callback.bot, callback.message.chat.id, state)
-            await callback.message.answer("Создание отменено.", reply_markup=private_main_menu(callback.message))
-        elif target == "photos":
-            await state.set_state(CreateAd.sell_photos)
-            await send_wizard_message(
-                callback.message,
-                state,
-                render_sell_photo_prompt(len(data.get("photos", []))),
-                reply_markup=sell_photo_inline_menu(has_photos=bool(data.get("photos", []))),
-            )
-        elif target == "buy_photos":
-            await ask_buy_photos(callback.message, state)
-        elif target == "description":
-            category = data.get("category", "Другое")
-            await state.set_state(CreateAd.sell_description)
-            await ask_sell_description(callback.message, state, category)
-        elif target == "price":
-            await state.set_state(CreateAd.sell_price)
-            await send_wizard_message(
-                callback.message,
-                state,
-                "Укажите цену",
-                reply_markup=wizard_back_keyboard("description"),
-            )
-        elif target == "address":
-            await state.set_state(CreateAd.sell_address)
-            await send_wizard_message(
-                callback.message,
-                state,
-                "Укажите Адресс",
-                reply_markup=wizard_back_keyboard("price"),
-            )
-        await callback.answer()
-
-    @router.callback_query(F.data.startswith("sell_confirm:"))
-    async def sell_confirm(callback: CallbackQuery, state: FSMContext) -> None:
-        if not await ensure_private_callback(callback):
-            return
-        action = callback.data.split(":", 1)[1]
-        if action == "reset":
-            await reset_sell_wizard(callback.bot, callback.message.chat.id, state)
-            await callback.answer("Создание отменено")
-            return
-        data = await state.get_data()
-        photos: list[tuple[str, str, str]] = data.get("photos", [])
-        required_fields = ("category", "description", "price", "address")
-        if any(not data.get(field) for field in required_fields):
-            await callback.answer("Не все поля заполнены", show_alert=True)
-            return
-        if await is_hourly_limit_exceeded_callback(callback, ctx):
-            await callback.answer(hourly_limit_message(ctx), show_alert=True)
-            return
-        duplicate_ad_id = ctx.db.find_duplicate_hash(
-            callback.from_user.id,
-            [item[2] for item in photos],
-            ctx.settings.duplicate_photo_days,
-        )
-        if duplicate_ad_id is not None:
-            await reset_sell_wizard(callback.bot, callback.message.chat.id, state)
-            await callback.message.answer(
-                f"Создание отклонено: похожее фото уже было в объявлении #{duplicate_ad_id} за последние "
-                f"{ctx.settings.duplicate_photo_days} дней.",
-                reply_markup=private_main_menu(callback.message),
-            )
-            await callback.answer()
-            return
-        ad_id = ctx.db.create_ad(
-            user_id=callback.from_user.id,
-            username=callback.from_user.username,
-            author_name=telegram_display_name(callback.from_user.full_name),
-            ad_type="sell",
-            category=data["category"],
-            description=data["description"],
-            price=data["price"],
-            address=data["address"],
-            photos=photos,
-        )
-        await reset_sell_wizard(callback.bot, callback.message.chat.id, state)
-        await publish_created_ad(callback.bot, callback.message, ctx, ad_id)
-        await callback.answer()
-
-    @router.callback_query(F.data.startswith("buy_confirm:"))
-    async def buy_confirm(callback: CallbackQuery, state: FSMContext) -> None:
-        if not await ensure_private_callback(callback):
-            return
-        action = callback.data.split(":", 1)[1]
-        if action == "reset":
-            await reset_sell_wizard(callback.bot, callback.message.chat.id, state)
-            await callback.answer("Создание отменено")
-            return
-        data = await state.get_data()
-        if not data.get("category") or not data.get("description"):
-            await callback.answer("Не все поля заполнены", show_alert=True)
-            return
-        if await is_hourly_limit_exceeded_callback(callback, ctx):
-            await callback.answer(hourly_limit_message(ctx), show_alert=True)
-            return
-        photos: list[tuple[str, str, str]] = data.get("photos", [])
-        if has_duplicate_in_batch([item[2] for item in photos]):
-            await reset_sell_wizard(callback.bot, callback.message.chat.id, state)
-            await callback.message.answer(
-                "Создание отклонено: среди загруженных фото есть повтор.",
-                reply_markup=private_main_menu(callback.message),
-            )
-            await callback.answer()
-            return
-        ad_id = ctx.db.create_ad(
-            user_id=callback.from_user.id,
-            username=callback.from_user.username,
-            author_name=telegram_display_name(callback.from_user.full_name),
-            ad_type="buy",
-            category=data["category"],
-            description=data["description"],
-            photos=photos,
-        )
-        await reset_sell_wizard(callback.bot, callback.message.chat.id, state)
-        await publish_created_ad(callback.bot, callback.message, ctx, ad_id)
-        await callback.answer()
-
-    @router.message(Command("reserve"))
-    @router.message(F.text == BTN_RESERVE)
-    async def reserve_by_number_start(message: Message, state: FSMContext) -> None:
-        if message.chat.type != "private":
-            return
-        await state.set_state(CreateAd.reserve_number)
-        await message.answer("Введите номер объявления.")
-
-    @router.message(F.text == BTN_RELEASE_RESERVE)
-    async def release_by_number_start(message: Message, state: FSMContext) -> None:
-        if message.chat.type != "private":
-            return
-        await state.set_state(CreateAd.release_reserve_number)
-        await message.answer("Введите номер объявления.")
-
-    @router.message(Command("remove"))
-    @router.message(F.text == BTN_REMOVE_AD)
-    async def remove_by_number_start(message: Message, state: FSMContext) -> None:
-        if message.chat.type != "private":
-            return
-        await state.set_state(CreateAd.remove_ad_number)
-        await message.answer("Введите номер объявления.")
-
-    @router.message(Command("edit"))
-    @router.message(F.text == BTN_EDIT_AD)
-    async def edit_by_number_start(message: Message, state: FSMContext) -> None:
-        if message.chat.type != "private":
-            return
-        await state.set_state(CreateAd.edit_number)
-        await message.answer("Укажите номер объявления.")
-
-    @router.message(StateFilter(CreateAd.reserve_number))
-    async def reserve_by_number(message: Message, state: FSMContext) -> None:
-        ad = ad_from_number_text(ctx, message.text or "")
-        await state.clear()
-        if ad is None:
-            await message.answer("Объявление с таким номером не найдено.", reply_markup=private_main_menu(message))
-            return
-        await reserve_ad(message, ctx, ad)
-
-    @router.message(StateFilter(CreateAd.release_reserve_number))
-    async def release_by_number(message: Message, state: FSMContext) -> None:
-        ad = ad_from_number_text(ctx, message.text or "")
-        await state.clear()
-        if ad is None:
-            await message.answer("Объявление с таким номером не найдено.", reply_markup=private_main_menu(message))
-            return
-        await release_reserve_ad(message, ctx, ad)
-
-    @router.message(StateFilter(CreateAd.remove_ad_number))
-    async def remove_by_number(message: Message, state: FSMContext) -> None:
-        ad = ad_from_number_text(ctx, message.text or "")
-        await state.clear()
-        if ad is None or ad.status != "active":
-            await message.answer("Объявление с таким номером не найдено.", reply_markup=private_main_menu(message))
-            return
-        if not can_remove_ad(ctx, message.from_user.id, ad):
-            await message.answer("Снять объявление может только автор или админ.", reply_markup=private_main_menu(message))
-            return
-        await message.answer("Укажите причину:", reply_markup=remove_reason_keyboard(ad.id, ad.ad_type))
-
-    @router.message(StateFilter(CreateAd.edit_number))
-    async def edit_by_number(message: Message, state: FSMContext) -> None:
-        ad = ad_from_number_text(ctx, message.text or "")
-        if ad is None or ad.status != "active":
-            await state.clear()
-            await message.answer("Объявление с таким номером не найдено.", reply_markup=private_main_menu(message))
-            return
-        if not can_remove_ad(ctx, message.from_user.id, ad):
-            await state.clear()
-            await message.answer(
-                "Редактировать объявление может только автор или админ.",
-                reply_markup=private_main_menu(message),
-            )
-            return
-        await state.update_data(edit_ad_id=ad.id)
-        await state.set_state(CreateAd.edit_description)
-        await message.answer(
-            f"Текущее описание:\n{ad.description}\n\nВведите новое описание.",
-            reply_markup=edit_next_finish_keyboard("photo"),
-        )
-
-    @router.message(StateFilter(CreateAd.edit_description))
-    async def edit_description(message: Message, state: FSMContext) -> None:
-        text = (message.text or "").strip()
-        if not text:
-            await message.answer("Отправьте новое описание текстом.")
-            return
-        data = await state.get_data()
-        ad_id = int(data["edit_ad_id"])
-        ctx.db.update_ad_description(ad_id, text)
-        await refresh_known_messages(message.bot, ctx, ad_id)
-        await message.answer("Описание обновлено.", reply_markup=edit_next_finish_keyboard("photo"))
-
-    @router.callback_query(F.data == "edit_finish")
-    async def edit_finish(callback: CallbackQuery, state: FSMContext) -> None:
-        if not await ensure_private_callback(callback):
-            return
-        await apply_pending_edit_photos(callback.bot, ctx, state)
-        await state.clear()
-        await callback.message.answer("Изменения внесены.", reply_markup=private_main_menu(callback.message))
-        await callback.answer()
-
-    @router.callback_query(F.data.startswith("edit_next:"))
-    async def edit_next(callback: CallbackQuery, state: FSMContext) -> None:
-        if not await ensure_private_callback(callback):
-            return
-        target = callback.data.split(":", 1)[1]
-        if target == "photo":
-            await state.set_state(CreateAd.edit_photo_menu)
-            await callback.message.answer("Изменить фото", reply_markup=edit_photo_menu())
-        elif target == "price":
-            data = await state.get_data()
-            ad = ctx.db.get_ad(int(data["edit_ad_id"]))
-            current = ad.price if ad and ad.price else ""
-            await state.set_state(CreateAd.edit_price)
-            await callback.message.answer(
-                f"Текущая цена:\n{current}\n\nВведите новую цену.",
-                reply_markup=edit_next_finish_keyboard("address"),
-            )
-        elif target == "address":
-            data = await state.get_data()
-            ad = ctx.db.get_ad(int(data["edit_ad_id"]))
-            current = ad.address if ad and ad.address else ""
-            await state.set_state(CreateAd.edit_address)
-            await callback.message.answer(
-                f"Текущий адрес:\n{current}\n\nВведите новый адрес.",
-                reply_markup=edit_finish_keyboard(),
-            )
-        elif target == "finish":
-            await apply_pending_edit_photos(callback.bot, ctx, state)
-            await state.clear()
-            await callback.message.answer("Изменения внесены.", reply_markup=private_main_menu(callback.message))
-        await callback.answer()
-
-    @router.callback_query(F.data.startswith("edit_photo:"))
-    async def edit_photo_action(callback: CallbackQuery, state: FSMContext) -> None:
-        if not await ensure_private_callback(callback):
-            return
-        action = callback.data.split(":", 1)[1]
-        data = await state.get_data()
-        ad_id = int(data["edit_ad_id"])
-        photos = ctx.db.ad_photos(ad_id)
-        pending_photos: list[tuple[str, str, str]] = data.get("edit_added_photos", [])
-        if action == "menu":
-            await state.set_state(CreateAd.edit_photo_menu)
-            await callback.message.answer("Изменить фото", reply_markup=edit_photo_menu())
-        elif action == "add":
-            if len(photos) + len(pending_photos) >= MAX_SELL_PHOTOS:
-                await callback.answer(f"Уже добавлено {MAX_SELL_PHOTOS} фото.", show_alert=True)
-                return
-            await state.set_state(CreateAd.edit_add_photo)
-            remaining = MAX_SELL_PHOTOS - len(photos) - len(pending_photos)
-            await callback.message.answer(f"Отправьте фото. Можно добавить еще {remaining}.")
-        elif action == "delete":
-            if not photos:
-                await callback.answer("Фото нет.", show_alert=True)
-                return
-            await state.set_state(CreateAd.edit_delete_photo)
-            await state.update_data(edit_delete_selected=[])
-            await callback.message.answer(
-                "Выберите фото для удаления:",
-                reply_markup=edit_photo_delete_keyboard(len(photos), set()),
-            )
-        await callback.answer()
-
-    @router.message(StateFilter(CreateAd.edit_add_photo), F.photo)
-    async def edit_add_photo(message: Message, state: FSMContext, bot: Bot) -> None:
-        data = await state.get_data()
-        ad_id = int(data["edit_ad_id"])
-        photos = ctx.db.ad_photos(ad_id)
-        pending_photos: list[tuple[str, str, str]] = data.get("edit_added_photos", [])
-        if len(photos) + len(pending_photos) >= MAX_SELL_PHOTOS:
-            await state.set_state(CreateAd.edit_photo_menu)
-            await message.answer("Достигнут лимит фото.", reply_markup=edit_photo_menu())
-            return
-        photo = message.photo[-1]
-        file = await bot.get_file(photo.file_id)
-        stream = await bot.download_file(file.file_path)
-        if stream is None:
-            await message.answer("Не удалось скачать фото, попробуйте другое.")
-            return
-        image_hash = dhash(stream.read())
-        if has_duplicate_in_batch([item[2] for item in pending_photos] + [image_hash]):
-            await message.answer("Похожее фото уже добавлено в этом редактировании.")
-            return
-        duplicate_ad_id = ctx.db.find_duplicate_hash(message.from_user.id, [image_hash], ctx.settings.duplicate_photo_days)
-        if duplicate_ad_id is not None:
-            await message.answer("Похожее фото уже есть в вашем объявлении.")
-            return
-        pending_photos.append((photo.file_id, photo.file_unique_id, image_hash))
-        await state.update_data(edit_added_photos=pending_photos)
-        await state.set_state(CreateAd.edit_photo_menu)
-        await message.answer("Фото добавлено. Оно появится после завершения редактирования.", reply_markup=edit_photo_menu())
-
-    @router.callback_query(F.data.startswith("edit_photo_toggle:"))
-    async def edit_photo_toggle(callback: CallbackQuery, state: FSMContext) -> None:
-        if not await ensure_private_callback(callback):
-            return
-        index = int(callback.data.split(":", 1)[1])
-        data = await state.get_data()
-        selected = set(data.get("edit_delete_selected", []))
-        if index in selected:
-            selected.remove(index)
-        else:
-            selected.add(index)
-        await state.update_data(edit_delete_selected=sorted(selected))
-        ad_id = int(data["edit_ad_id"])
-        photo_count = len(ctx.db.ad_photos(ad_id))
-        await callback.message.edit_reply_markup(reply_markup=edit_photo_delete_keyboard(photo_count, selected))
-        await callback.answer()
-
-    @router.callback_query(F.data == "edit_photo_apply_delete")
-    async def edit_photo_apply_delete(callback: CallbackQuery, state: FSMContext) -> None:
-        if not await ensure_private_callback(callback):
-            return
-        data = await state.get_data()
-        ad_id = int(data["edit_ad_id"])
-        selected = list(data.get("edit_delete_selected", []))
-        if not selected:
-            await callback.answer("Выберите фото.", show_alert=True)
-            return
-        ctx.db.delete_ad_photos_by_indexes(ad_id, selected)
-        await republish_ad(callback.bot, ctx, ad_id)
-        await state.set_state(CreateAd.edit_photo_menu)
-        await callback.message.answer("Фото удалены. Изменить фото", reply_markup=edit_photo_menu())
-        await callback.answer()
-
-    @router.message(StateFilter(CreateAd.edit_price))
-    async def edit_price(message: Message, state: FSMContext) -> None:
-        text = (message.text or "").strip()
-        if not text:
-            await message.answer("Отправьте новую цену текстом.")
-            return
-        data = await state.get_data()
-        ad_id = int(data["edit_ad_id"])
-        ctx.db.update_ad_price(ad_id, text)
-        await refresh_known_messages(message.bot, ctx, ad_id)
-        await message.answer("Цена обновлена.", reply_markup=edit_next_finish_keyboard("address"))
-
-    @router.message(StateFilter(CreateAd.edit_address))
-    async def edit_address(message: Message, state: FSMContext) -> None:
-        text = (message.text or "").strip()
-        if not text:
-            await message.answer("Отправьте новый адрес текстом.")
-            return
-        data = await state.get_data()
-        ad_id = int(data["edit_ad_id"])
-        ctx.db.update_ad_address(ad_id, text)
-        await refresh_known_messages(message.bot, ctx, ad_id)
-        await message.answer("Адрес обновлен.", reply_markup=edit_finish_keyboard())
-
-    @router.callback_query(F.data.startswith("remove_start:"))
-    async def remove_start(callback: CallbackQuery) -> None:
-        if not await ensure_private_callback(callback):
-            return
-        ad_id = int(callback.data.split(":", 1)[1])
-        ad = ctx.db.get_ad(ad_id)
-        if ad is None or not can_remove_ad(ctx, callback.from_user.id, ad):
-            await callback.answer("Это действие доступно только автору", show_alert=True)
-            return
-        await callback.message.answer("Укажите причину:", reply_markup=remove_reason_keyboard(ad_id, ad.ad_type))
-        await callback.answer()
-
-    @router.callback_query(F.data.startswith("remove_reason:"))
-    async def remove_reason(callback: CallbackQuery) -> None:
-        if not await ensure_private_callback(callback):
-            return
-        _, ad_id_text, reason = callback.data.split(":", 2)
-        ad_id = int(ad_id_text)
-        ad = ctx.db.get_ad(ad_id)
-        if ad is None or not can_remove_ad(ctx, callback.from_user.id, ad):
-            await callback.answer("Это действие доступно только автору", show_alert=True)
-            return
-        await delete_known_messages(callback.bot, ctx, ad_id)
-        ctx.db.mark_deleted(ad_id, reason)
-        await callback.message.delete()
-        await callback.message.answer("Объявление снято.", reply_markup=private_main_menu(callback.message))
-        await callback.answer("Объявление снято")
+    deps = SimpleNamespace(
+        CreateAd=CreateAd,
+        MAX_BUY_DESCRIPTION=MAX_BUY_DESCRIPTION,
+        MAX_SELL_PHOTOS=MAX_SELL_PHOTOS,
+        ad_from_number_text=ad_from_number_text,
+        apply_pending_edit_photos=apply_pending_edit_photos,
+        ask_buy_description=ask_buy_description,
+        ask_buy_photos=ask_buy_photos,
+        ask_sell_category=ask_sell_category,
+        ask_sell_description=ask_sell_description,
+        ask_sell_description_from_state=ask_sell_description_from_state,
+        ask_sell_photos=ask_sell_photos,
+        can_remove_ad=can_remove_ad,
+        delete_known_messages=delete_known_messages,
+        ensure_private_callback=ensure_private_callback,
+        has_duplicate_in_batch=has_duplicate_in_batch,
+        hourly_limit_message=hourly_limit_message,
+        is_daily_limit_exceeded=is_daily_limit_exceeded,
+        is_daily_limit_exceeded_callback=is_daily_limit_exceeded_callback,
+        is_forwarded=is_forwarded,
+        is_hourly_limit_exceeded=is_hourly_limit_exceeded,
+        is_hourly_limit_exceeded_callback=is_hourly_limit_exceeded_callback,
+        private_main_menu=private_main_menu,
+        publish_created_ad=publish_created_ad,
+        refresh_known_messages=refresh_known_messages,
+        release_reserve_ad=release_reserve_ad,
+        remember_wizard_user_message=remember_wizard_user_message,
+        render_sell_photo_prompt=render_sell_photo_prompt,
+        republish_ad=republish_ad,
+        reserve_ad=reserve_ad,
+        reset_sell_wizard=reset_sell_wizard,
+        safe_delete=safe_delete,
+        send_wizard_message=send_wizard_message,
+        telegram_display_name=telegram_display_name,
+    )
+    register_reply_menu_handlers(router, ctx, deps)
 
     @router.message(F.reply_to_message)
     async def reply_command(message: Message) -> None:
@@ -898,13 +150,13 @@ def build_router(ctx: AppContext) -> Router:
         if message.chat.type == "private":
             current_state = await state.get_state()
             if current_state == CreateAd.sell_description.state:
-                await sell_description(message, state)
+                await deps.sell_description_handler(message, state)
                 return
             if current_state == CreateAd.sell_price.state:
-                await sell_price(message, state)
+                await deps.sell_price_handler(message, state)
                 return
             if current_state == CreateAd.sell_address.state:
-                await finish_sell(message, state)
+                await deps.finish_sell_handler(message, state)
                 return
             if current_state is not None:
                 await message.answer("Завершите текущий шаг или нажмите «Назад».")
@@ -915,46 +167,6 @@ def build_router(ctx: AppContext) -> Router:
             await safe_delete(message)
 
     return router
-
-
-async def finish_buy_ad(message: Message, state: FSMContext, ctx: AppContext) -> None:
-    if await is_hourly_limit_exceeded(message, ctx):
-        await state.clear()
-        await message.answer(
-            hourly_limit_message(ctx),
-            reply_markup=private_main_menu(message),
-        )
-        return
-    if await is_daily_limit_exceeded(message, ctx, ad_type="buy", limit=ctx.settings.buy_daily_limit):
-        await state.clear()
-        await message.answer(
-            "Превышен суточный лимит объявлений на покупку.",
-            reply_markup=private_main_menu(message),
-        )
-        return
-    data = await state.get_data()
-    if not data.get("category") or not data.get("description"):
-        await message.answer("Не все поля заполнены.", reply_markup=private_main_menu(message))
-        return
-    photos: list[tuple[str, str, str]] = data.get("photos", [])
-    if has_duplicate_in_batch([item[2] for item in photos]):
-        await state.clear()
-        await message.answer(
-            "Создание отклонено: среди загруженных фото есть повтор.",
-            reply_markup=private_main_menu(message),
-        )
-        return
-    ad_id = ctx.db.create_ad(
-        user_id=message.from_user.id,
-        username=message.from_user.username,
-        author_name=telegram_display_name(message.from_user.full_name),
-        ad_type="buy",
-        category=data["category"],
-        description=data["description"],
-        photos=photos,
-    )
-    await state.clear()
-    await publish_created_ad(message.bot, message, ctx, ad_id)
 
 
 async def publish_created_ad(bot: Bot, message: Message, ctx: AppContext, ad_id: int) -> None:
