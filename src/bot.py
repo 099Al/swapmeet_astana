@@ -613,6 +613,8 @@ async def handle_publication_chat_message(message: Message, ctx: AppContext) -> 
     if message.from_user is None or message.from_user.is_bot:
         await safe_delete(message)
         return
+    if ctx.db.is_admin(message.from_user.id):
+        return
     if not is_communication_topic_message(message, ctx):
         await safe_delete(message)
         return
