@@ -1,10 +1,14 @@
 # Python-generated files
 __pycache__/
 *.py[oc]
-build/
+build/*
+!build/
+!build/Dockerfile
 dist/
 wheels/
 *.egg-info
 .env
+data/*.sqlite3
+data/*.sqlite3-*
 # Virtual environments
 .venv

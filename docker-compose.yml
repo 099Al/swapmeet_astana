@@ -1,0 +1,12 @@
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: build/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_PATH: /data/swapmeet_astana.sqlite3
+    volumes:
+      - ./data:/data

@@ -24,7 +24,7 @@ Telegram-бот для объявлений купли, продажи и обм
 
 ```env
 BOT_TOKEN=put-telegram-bot-token-here
-DATABASE_PATH=swapmeet_astana.sqlite3
+DATABASE_PATH=data/swapmeet_astana.sqlite3
 PUBLICATION_CHAT_ID=@swapmeet_astana
 COMMUNICATION_TOPIC_ID=
 COMMUNICATION_DAILY_MESSAGE_LIMIT=20
@@ -63,4 +63,46 @@ uv run python -m bot
 ```powershell
 $env:PYTHONPATH="src"
 python -m bot
+```
+
+### Запуск в Docker
+
+Скопируйте пример настроек и заполните токен:
+
+```bash
+cp .env.example .env
+```
+
+База проекта хранится в `data/swapmeet_astana.sqlite3`. В Docker этот каталог монтируется в контейнер как `/data`, а `DATABASE_PATH` переопределяется на `/data/swapmeet_astana.sqlite3` в `docker-compose.yml`.
+
+```env
+DATABASE_PATH=data/swapmeet_astana.sqlite3
+```
+
+Dockerfile лежит в `build/Dockerfile`. Соберите и запустите бота:
+
+```bash
+docker compose up -d --build
+```
+
+Полезные команды на сервере:
+
+```bash
+docker compose logs -f bot
+docker compose restart bot
+docker compose down
+```
+
+SQLite хранится в `data/swapmeet_astana.sqlite3`. Сделать резервную копию:
+
+```bash
+cp data/swapmeet_astana.sqlite3 data/swapmeet_astana.backup.sqlite3
+```
+
+Восстановить базу из файла рядом с проектом:
+
+```bash
+docker compose down
+cp swapmeet_astana.sqlite3 data/swapmeet_astana.sqlite3
+docker compose up -d
 ```

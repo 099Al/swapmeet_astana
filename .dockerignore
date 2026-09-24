@@ -1,0 +1,12 @@
+.env
+.git
+.idea
+.venv
+__pycache__/
+data/
+*.pyc
+*.pyo
+*.sqlite3
+dist/
+wheels/
+*.egg-info/
