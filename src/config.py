@@ -11,6 +11,8 @@ from dotenv import find_dotenv, load_dotenv
 class Settings:
     bot_token: str
     database_path: str = "swapmeet_astana.sqlite3"
+    fsm_storage: str = "memory"
+    redis_url: str = "redis://localhost:6379/0"
     publication_chat_id: str | int = "@swapmeet_astana"
     communication_topic_id: int | None = None
     communication_daily_message_limit: int = 20
@@ -36,10 +38,15 @@ def load_settings() -> Settings:
     if not token:
         raise RuntimeError("BOT_TOKEN is required. Put it into .env or environment variables.")
     database_path = _resolve_database_path(os.getenv("DATABASE_PATH", "swapmeet_astana.sqlite3"), env_path)
+    fsm_storage = os.getenv("FSM_STORAGE", "memory").strip().lower()
+    if fsm_storage not in {"memory", "redis"}:
+        raise RuntimeError("FSM_STORAGE must be either 'memory' or 'redis'.")
 
     return Settings(
         bot_token=token,
         database_path=database_path,
+        fsm_storage=fsm_storage,
+        redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0").strip(),
         publication_chat_id=_get_chat_id(os.getenv("PUBLICATION_CHAT_ID", "@swapmeet_astana")),
         communication_topic_id=_get_optional_int("COMMUNICATION_TOPIC_ID"),
         communication_daily_message_limit=_get_int("COMMUNICATION_DAILY_MESSAGE_LIMIT", 20),

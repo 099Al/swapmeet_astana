@@ -25,6 +25,8 @@ Telegram-бот для объявлений купли, продажи и обм
 ```env
 BOT_TOKEN=put-telegram-bot-token-here
 DATABASE_PATH=data/swapmeet_astana.sqlite3
+FSM_STORAGE=memory
+REDIS_URL=redis://localhost:6379/0
 PUBLICATION_CHAT_ID=@swapmeet_astana
 COMMUNICATION_TOPIC_ID=
 COMMUNICATION_DAILY_MESSAGE_LIMIT=20
@@ -84,6 +86,15 @@ Dockerfile лежит в `build/Dockerfile`. Соберите и запусти�
 ```bash
 docker compose up -d --build
 ```
+
+При Docker-запуске Compose поднимает Redis и переопределяет:
+
+```env
+FSM_STORAGE=redis
+REDIS_URL=redis://redis:6379/0
+```
+
+Для локального запуска без Docker можно оставить `FSM_STORAGE=memory`; Redis тогда не нужен, но незавершенные сценарии пользователей будут сбрасываться при перезапуске процесса.
 
 Полезные команды на сервере:
 

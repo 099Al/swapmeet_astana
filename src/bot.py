@@ -13,11 +13,13 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import BaseStorage
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import BotCommand, CallbackQuery, InputMediaPhoto, Message
 from aiogram.utils.markdown import hbold
 
-from config import load_settings
+from config import Settings, load_settings
 from context import AppContext, CreateAd
 from db import Ad, Database
 from handlers import register_reply_menu_handlers
@@ -778,6 +780,12 @@ async def retention_cleanup_scheduler(bot: Bot, ctx: AppContext) -> None:
         )
 
 
+def create_fsm_storage(settings: Settings) -> BaseStorage:
+    if settings.fsm_storage == "redis":
+        return RedisStorage.from_url(settings.redis_url)
+    return MemoryStorage()
+
+
 async def run() -> None:
     logging.basicConfig(level=logging.INFO)
     settings = load_settings()
@@ -796,7 +804,7 @@ async def run() -> None:
             BotCommand(command="edit", description="Редактировать объявление"),
         ]
     )
-    dispatcher = Dispatcher(storage=MemoryStorage())
+    dispatcher = Dispatcher(storage=create_fsm_storage(settings))
     ctx = AppContext(settings=settings, db=db)
     await run_retention_cleanup(bot, ctx)
     cleanup_started_at = datetime.now()

@@ -1,12 +1,26 @@
 services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+
   bot:
     build:
       context: .
       dockerfile: build/Dockerfile
     restart: unless-stopped
+    depends_on:
+      - redis
     env_file:
       - .env
     environment:
       DATABASE_PATH: /data/swapmeet_astana.sqlite3
+      FSM_STORAGE: redis
+      REDIS_URL: redis://redis:6379/0
     volumes:
       - ./data:/data
+
+volumes:
+  redis_data:
