@@ -213,6 +213,19 @@ def register_create_handlers(router: Router, ctx, deps) -> None:
         photos.append((photo.file_id, photo.file_unique_id, image_hash))
         await deps.remember_wizard_user_message(state, message.message_id)
         await state.update_data(photos=photos)
+        caption = (message.caption or "").strip()
+        if caption:
+            if not await _validate_sell_photos(message, state):
+                return
+            await state.update_data(description=caption)
+            await state.set_state(CreateAd.sell_price)
+            await deps.send_wizard_message(
+                message,
+                state,
+                "Укажите цену",
+                reply_markup=wizard_back_keyboard("description"),
+            )
+            return
         if len(photos) >= deps.MAX_SELL_PHOTOS:
             await deps.ask_sell_description_from_state(message, state)
             return
