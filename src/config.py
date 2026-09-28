@@ -22,6 +22,7 @@ class Settings:
     duplicate_photo_days: int = 7
     retention_period_days: int = 7
     admin_ids: tuple[int, ...] = ()
+    category_topic_ids: dict[str, int] | None = None
 
 
 def _get_int(name: str, default: int) -> int:
@@ -56,6 +57,7 @@ def load_settings() -> Settings:
         duplicate_photo_days=_get_int("DUPLICATE_PHOTO_DAYS", 7),
         retention_period_days=_get_int("RETENTION_PERIOD_DAYS", 7),
         admin_ids=_get_int_list("ADMIN_IDS"),
+        category_topic_ids=_get_category_topic_ids(),
     )
 
 
@@ -79,6 +81,18 @@ def _get_optional_int(name: str) -> int | None:
     if not value:
         return None
     return int(value)
+
+
+def _get_category_topic_ids() -> dict[str, int]:
+    topics = {
+        "Дом(быт/ремонт)": _get_optional_int("TOPIC_HOME_ID"),
+        "Другое": _get_optional_int("TOPIC_OTHER_ID"),
+        "Одежда": _get_optional_int("TOPIC_CLOTHES_ID"),
+        "Животные": _get_optional_int("TOPIC_ANIMALS_ID"),
+        "Книги": _get_optional_int("TOPIC_BOOKS_ID"),
+        "Детские": _get_optional_int("TOPIC_KIDS_ID"),
+    }
+    return {category: topic_id for category, topic_id in topics.items() if topic_id is not None}
 
 
 def _get_chat_id(value: str) -> str | int:

@@ -418,12 +418,17 @@ async def show_one_ad(message: Message, ctx: AppContext, ad: Ad | None, reply_ma
 async def send_ad_to_chat(bot: Bot, ctx: AppContext, chat_id: ChatId, ad: Ad) -> None:
     photos = ctx.db.ad_photos(ad.id)
     text = render_ad(ad)
+    message_thread_id = category_topic_id(ctx, ad.category)
     if len(photos) > 1:
         media = [
             InputMediaPhoto(media=file_id, caption=text if index == 0 else None, parse_mode=ParseMode.HTML)
             for index, file_id in enumerate(photos[:MAX_SELL_PHOTOS])
         ]
-        sent_messages = await bot.send_media_group(chat_id=chat_id, media=media)
+        sent_messages = await bot.send_media_group(
+            chat_id=chat_id,
+            media=media,
+            message_thread_id=message_thread_id,
+        )
         for index, sent_message in enumerate(sent_messages):
             ctx.db.save_ad_message(
                 ad_id=ad.id,
@@ -433,7 +438,13 @@ async def send_ad_to_chat(bot: Bot, ctx: AppContext, chat_id: ChatId, ad: Ad) ->
                 photo_index=index,
             )
     elif len(photos) == 1:
-        sent = await bot.send_photo(chat_id=chat_id, photo=photos[0], caption=text, parse_mode=ParseMode.HTML)
+        sent = await bot.send_photo(
+            chat_id=chat_id,
+            photo=photos[0],
+            caption=text,
+            parse_mode=ParseMode.HTML,
+            message_thread_id=message_thread_id,
+        )
         ctx.db.save_ad_message(
             ad_id=ad.id,
             chat_id=sent.chat.id,
@@ -447,6 +458,7 @@ async def send_ad_to_chat(bot: Bot, ctx: AppContext, chat_id: ChatId, ad: Ad) ->
             text=text,
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True,
+            message_thread_id=message_thread_id,
         )
         ctx.db.save_ad_message(
             ad_id=ad.id,
@@ -454,6 +466,10 @@ async def send_ad_to_chat(bot: Bot, ctx: AppContext, chat_id: ChatId, ad: Ad) ->
             message_id=sent.message_id,
             message_kind="text",
         )
+
+
+def category_topic_id(ctx: AppContext, category: str) -> int | None:
+    return (ctx.settings.category_topic_ids or {}).get(category)
 
 
 async def republish_ad(bot: Bot, ctx: AppContext, ad_id: int) -> None:
