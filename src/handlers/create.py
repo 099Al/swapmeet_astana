@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from aiogram import Bot, F, Router
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -21,6 +23,8 @@ from keyboards import (
 
 def register_create_handlers(router: Router, ctx, deps) -> None:
     CreateAd = deps.CreateAd
+    media_group_buffers: dict[tuple[int, int, str, str], list[Message]] = {}
+    media_group_tasks: dict[tuple[int, int, str, str], asyncio.Task] = {}
 
     @router.message(Command("place", "create", "post"))
     @router.message(F.text == BTN_CREATE)
@@ -197,6 +201,9 @@ def register_create_handlers(router: Router, ctx, deps) -> None:
     async def sell_photo(message: Message, state: FSMContext, bot: Bot) -> None:
         if deps.is_forwarded(message):
             await message.answer("Пересланные объявления внутри бота не допускаются.")
+            return
+        if message.media_group_id:
+            await _queue_sell_media_group(message, state, bot)
             return
         photo = message.photo[-1]
         file = await bot.get_file(photo.file_id)
@@ -483,6 +490,81 @@ def register_create_handlers(router: Router, ctx, deps) -> None:
             await callback.message.answer(text, reply_markup=deps.private_main_menu(callback.message))
             await callback.answer()
         return False
+
+    async def _queue_sell_media_group(message: Message, state: FSMContext, bot: Bot) -> None:
+        if message.from_user is None or message.media_group_id is None:
+            return
+        key = (message.chat.id, message.from_user.id, message.media_group_id, "sell")
+        media_group_buffers.setdefault(key, []).append(message)
+        task = media_group_tasks.get(key)
+        if task is not None:
+            task.cancel()
+        media_group_tasks[key] = asyncio.create_task(_flush_sell_media_group(key, state, bot))
+
+    async def _flush_sell_media_group(
+        key: tuple[int, int, str, str],
+        state: FSMContext,
+        bot: Bot,
+    ) -> None:
+        try:
+            await asyncio.sleep(0.8)
+        except asyncio.CancelledError:
+            return
+
+        messages = media_group_buffers.pop(key, [])
+        media_group_tasks.pop(key, None)
+        if not messages:
+            return
+
+        messages.sort(key=lambda item: item.message_id)
+        data = await state.get_data()
+        photos: list[tuple[str, str, str]] = list(data.get("photos", []))
+        caption = next(((item.caption or "").strip() for item in messages if (item.caption or "").strip()), "")
+        reply_message = messages[-1]
+
+        for item in messages:
+            if len(photos) >= deps.MAX_SELL_PHOTOS:
+                break
+            if not item.photo:
+                continue
+            photo = item.photo[-1]
+            file = await bot.get_file(photo.file_id)
+            stream = await bot.download_file(file.file_path)
+            if stream is None:
+                await reply_message.answer("Не удалось скачать одно из фото, попробуйте другое.")
+                continue
+            image_hash = dhash(stream.read())
+            photos.append((photo.file_id, photo.file_unique_id, image_hash))
+            await deps.remember_wizard_user_message(state, item.message_id)
+
+        await state.update_data(photos=photos)
+        if not photos:
+            await reply_message.answer("Не удалось добавить фото, попробуйте еще раз.")
+            return
+
+        if caption:
+            if not await _validate_sell_photos(reply_message, state):
+                return
+            await state.update_data(description=caption)
+            await state.set_state(CreateAd.sell_price)
+            await deps.send_wizard_message(
+                reply_message,
+                state,
+                "Укажите цену",
+                reply_markup=wizard_back_keyboard("description"),
+            )
+            return
+
+        if len(photos) >= deps.MAX_SELL_PHOTOS:
+            await deps.ask_sell_description_from_state(reply_message, state)
+            return
+
+        await deps.send_wizard_message(
+            reply_message,
+            state,
+            deps.render_sell_photo_prompt(len(photos)),
+            reply_markup=sell_photo_inline_menu(has_photos=True),
+        )
 
     deps.sell_description_handler = sell_description
     deps.sell_price_handler = sell_price
