@@ -94,23 +94,24 @@ python -m bot
 cp .env.example .env
 ```
 
-База проекта хранится в `data/swapmeet_astana.sqlite3`. В Docker этот каталог монтируется в контейнер как `/data`, а `DATABASE_PATH` переопределяется на `/data/swapmeet_astana.sqlite3` в `docker-compose.yml`.
+База проекта хранится в `data/swapmeet_astana.sqlite3`. В Docker этот каталог монтируется в контейнер как `/data`, а `DATABASE_PATH` внутри образа задан как `/data/swapmeet_astana.sqlite3`.
 
 ```env
 DATABASE_PATH=data/swapmeet_astana.sqlite3
 ```
 
-Dockerfile лежит в `build/Dockerfile`. Соберите и запустите бота:
+Dockerfile лежит в корне проекта. Соберите и запустите бота:
 
 ```bash
-docker compose up -d --build
+docker build -t swapmeet-astana .
+docker run -d --name swapmeet-astana --env-file .env -v ./data:/data swapmeet-astana
 ```
 
-При Docker-запуске Compose поднимает Redis и переопределяет:
+При Docker-запуске Redis стартует внутри этого же контейнера. Dockerfile задает:
 
 ```env
 FSM_STORAGE=redis
-REDIS_URL=redis://redis:6379/0
+REDIS_URL=redis://127.0.0.1:6379/0
 ```
 
 Для локального запуска без Docker можно оставить `FSM_STORAGE=memory`; Redis тогда не нужен, но незавершенные сценарии пользователей будут сбрасываться при перезапуске процесса.
@@ -118,9 +119,10 @@ REDIS_URL=redis://redis:6379/0
 Полезные команды на сервере:
 
 ```bash
-docker compose logs -f bot
-docker compose restart bot
-docker compose down
+docker logs -f swapmeet-astana
+docker restart swapmeet-astana
+docker stop swapmeet-astana
+docker rm swapmeet-astana
 ```
 
 SQLite хранится в `data/swapmeet_astana.sqlite3`. Сделать резервную копию:
@@ -132,7 +134,8 @@ cp data/swapmeet_astana.sqlite3 data/swapmeet_astana.backup.sqlite3
 Восстановить базу из файла рядом с проектом:
 
 ```bash
-docker compose down
+docker stop swapmeet-astana
+docker rm swapmeet-astana
 cp swapmeet_astana.sqlite3 data/swapmeet_astana.sqlite3
-docker compose up -d
+docker run -d --name swapmeet-astana --env-file .env -v ./data:/data swapmeet-astana
 ```
