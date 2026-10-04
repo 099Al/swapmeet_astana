@@ -24,7 +24,7 @@ Telegram-бот для объявлений купли, продажи и обм
 
 ```env
 BOT_TOKEN=put-telegram-bot-token-here
-DATABASE_PATH=data/swapmeet_astana.sqlite3
+DATABASE_PATH=data/bot.db
 FSM_STORAGE=memory
 REDIS_URL=redis://localhost:6379/0
 PUBLICATION_CHAT_ID=@swapmeet_astana
@@ -94,10 +94,10 @@ python -m bot
 cp .env.example .env
 ```
 
-База проекта хранится в `data/swapmeet_astana.sqlite3`. В Docker этот каталог монтируется в контейнер как `/app/data`, а `DATABASE_PATH` внутри образа задан как `/app/data/swapmeet_astana.sqlite3`.
+База проекта хранится в `data/bot.db`. В Docker этот каталог монтируется в контейнер как `/app/data`, а `DATABASE_PATH` внутри образа задан как `/app/data/bot.db`.
 
 ```env
-DATABASE_PATH=data/swapmeet_astana.sqlite3
+DATABASE_PATH=data/bot.db
 ```
 
 Dockerfile лежит в корне проекта. Соберите и запустите бота:
@@ -125,10 +125,10 @@ docker stop swapmeet-astana
 docker rm swapmeet-astana
 ```
 
-SQLite хранится в `data/swapmeet_astana.sqlite3`. Сделать резервную копию:
+SQLite хранится в `data/bot.db`. Сделать резервную копию:
 
 ```bash
-cp data/swapmeet_astana.sqlite3 data/swapmeet_astana.backup.sqlite3
+cp data/bot.db data/bot.backup.db
 ```
 
 Восстановить базу из файла рядом с проектом:
@@ -136,6 +136,6 @@ cp data/swapmeet_astana.sqlite3 data/swapmeet_astana.backup.sqlite3
 ```bash
 docker stop swapmeet-astana
 docker rm swapmeet-astana
-cp swapmeet_astana.sqlite3 data/swapmeet_astana.sqlite3
+cp bot.db data/bot.db
 docker run -d --name swapmeet-astana --env-file .env -v ./data:/app/data swapmeet-astana
 ```

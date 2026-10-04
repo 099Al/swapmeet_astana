@@ -10,7 +10,7 @@ from dotenv import find_dotenv, load_dotenv
 @dataclass(frozen=True)
 class Settings:
     bot_token: str
-    database_path: str = "swapmeet_astana.sqlite3"
+    database_path: str = "bot.db"
     fsm_storage: str = "memory"
     redis_url: str = "redis://localhost:6379/0"
     publication_chat_id: str | int = "@swapmeet_astana"
@@ -38,7 +38,7 @@ def load_settings() -> Settings:
     token = os.getenv("BOT_TOKEN", "").strip()
     if not token:
         raise RuntimeError("BOT_TOKEN is required. Put it into .env or environment variables.")
-    database_path = _resolve_database_path(os.getenv("DATABASE_PATH", "swapmeet_astana.sqlite3"), env_path)
+    database_path = _resolve_database_path(os.getenv("DATABASE_PATH", "bot.db"), env_path)
     fsm_storage = os.getenv("FSM_STORAGE", "memory").strip().lower()
     if fsm_storage not in {"memory", "redis"}:
         raise RuntimeError("FSM_STORAGE must be either 'memory' or 'redis'.")
