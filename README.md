@@ -94,7 +94,7 @@ python -m bot
 cp .env.example .env
 ```
 
-База проекта хранится в `data/swapmeet_astana.sqlite3`. В Docker этот каталог монтируется в контейнер как `/data`, а `DATABASE_PATH` внутри образа задан как `/data/swapmeet_astana.sqlite3`.
+База проекта хранится в `data/swapmeet_astana.sqlite3`. В Docker этот каталог монтируется в контейнер как `/app/data`, а `DATABASE_PATH` внутри образа задан как `/app/data/swapmeet_astana.sqlite3`.
 
 ```env
 DATABASE_PATH=data/swapmeet_astana.sqlite3
@@ -104,7 +104,7 @@ Dockerfile лежит в корне проекта. Соберите и запу
 
 ```bash
 docker build -t swapmeet-astana .
-docker run -d --name swapmeet-astana --env-file .env -v ./data:/data swapmeet-astana
+docker run -d --name swapmeet-astana --env-file .env -v ./data:/app/data swapmeet-astana
 ```
 
 При Docker-запуске Redis стартует внутри этого же контейнера. Dockerfile задает:
@@ -137,5 +137,5 @@ cp data/swapmeet_astana.sqlite3 data/swapmeet_astana.backup.sqlite3
 docker stop swapmeet-astana
 docker rm swapmeet-astana
 cp swapmeet_astana.sqlite3 data/swapmeet_astana.sqlite3
-docker run -d --name swapmeet-astana --env-file .env -v ./data:/data swapmeet-astana
+docker run -d --name swapmeet-astana --env-file .env -v ./data:/app/data swapmeet-astana
 ```
