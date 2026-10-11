@@ -22,6 +22,7 @@ class Settings:
     duplicate_photo_days: int = 7
     retention_period_days: int = 7
     retention_archive_period: int = 30
+    repost_limit: int = 5
     admin_ids: tuple[int, ...] = ()
     category_topic_ids: dict[str, int] | None = None
 
@@ -58,6 +59,7 @@ def load_settings() -> Settings:
         duplicate_photo_days=_get_int("DUPLICATE_PHOTO_DAYS", 7),
         retention_period_days=_get_int("RETENTION_PERIOD_DAYS", 7),
         retention_archive_period=_get_int("RETENTION_ARCHIVE_PERIOD", 30),
+        repost_limit=_get_int("REPOST_LIMIT", 5),
         admin_ids=_get_int_list("ADMIN_IDS"),
         category_topic_ids=_get_category_topic_ids(),
     )
