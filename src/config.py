@@ -21,6 +21,7 @@ class Settings:
     user_hourly_ad_limit: int = 5
     duplicate_photo_days: int = 7
     retention_period_days: int = 7
+    retention_archive_period: int = 30
     admin_ids: tuple[int, ...] = ()
     category_topic_ids: dict[str, int] | None = None
 
@@ -56,6 +57,7 @@ def load_settings() -> Settings:
         user_hourly_ad_limit=_get_int("USER_HOURLY_AD_LIMIT", 5),
         duplicate_photo_days=_get_int("DUPLICATE_PHOTO_DAYS", 7),
         retention_period_days=_get_int("RETENTION_PERIOD_DAYS", 7),
+        retention_archive_period=_get_int("RETENTION_ARCHIVE_PERIOD", 30),
         admin_ids=_get_int_list("ADMIN_IDS"),
         category_topic_ids=_get_category_topic_ids(),
     )
