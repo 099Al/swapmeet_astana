@@ -19,6 +19,7 @@ BTN_RESERVE = "Забронировать"
 BTN_RELEASE_RESERVE = "Снять Бронь"
 BTN_REMOVE_AD = "Снять объявление"
 BTN_EDIT_AD = "Редактировать"
+BTN_MY_ADS = "Мои объявления"
 
 
 def main_menu() -> ReplyKeyboardMarkup:
@@ -27,6 +28,7 @@ def main_menu() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_CREATE)],
             [KeyboardButton(text=BTN_REMOVE_AD), KeyboardButton(text=BTN_EDIT_AD)],
             [KeyboardButton(text=BTN_RELEASE_RESERVE), KeyboardButton(text=BTN_RESERVE)],
+            [KeyboardButton(text=BTN_MY_ADS)],
         ],
         resize_keyboard=True,
     )
@@ -161,5 +163,13 @@ def remove_reason_keyboard(ad_id: int, ad_type: str) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text=reason, callback_data=f"remove_reason:{ad_id}:{reason}")]
             for reason in reasons
+        ]
+    )
+
+
+def repost_ad_keyboard(hist_ad_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Повторно опубликовать", callback_data=f"my_ads:repost:{hist_ad_id}")]
         ]
     )

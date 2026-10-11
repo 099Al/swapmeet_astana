@@ -7,6 +7,8 @@ from datetime import datetime, time, timedelta
 from pathlib import Path
 from typing import Iterator
 
+_USE_ROW = object()
+
 
 @dataclass(frozen=True)
 class Ad:
@@ -23,6 +25,30 @@ class Ad:
     created_at: str
     deleted_at: str | None
     reserved_by: int | None
+    archived_cnt: int
+    repost_cnt: int
+
+
+@dataclass(frozen=True)
+class HistAd:
+    id: int
+    ad_id: int
+    user_id: int
+    username: str | None
+    author_name: str | None
+    ad_type: str
+    category: str
+    description: str
+    price: str | None
+    address: str | None
+    status: str
+    created_at: str
+    deleted_at: str | None
+    removed_at: str
+    remove_reason: str
+    reserved_by: int | None
+    archived_cnt: int
+    repost_cnt: int
 
 
 @dataclass(frozen=True)
@@ -87,7 +113,9 @@ class Database:
                     deleted_at TEXT,
                     remove_reason TEXT,
                     reserved_by INTEGER,
-                    reserved_at TEXT
+                    reserved_at TEXT,
+                    archived_cnt INTEGER NOT NULL DEFAULT 0,
+                    repost_cnt INTEGER NOT NULL DEFAULT 0
                 );
 
                 CREATE TABLE IF NOT EXISTS market_photos (
@@ -110,9 +138,25 @@ class Database:
                     description TEXT NOT NULL,
                     price TEXT,
                     address TEXT,
+                    status TEXT NOT NULL DEFAULT 'deleted',
                     created_at TEXT NOT NULL,
+                    deleted_at TEXT,
                     removed_at TEXT NOT NULL,
-                    remove_reason TEXT NOT NULL
+                    remove_reason TEXT NOT NULL,
+                    reserved_by INTEGER,
+                    reserved_at TEXT,
+                    archived_cnt INTEGER NOT NULL DEFAULT 1,
+                    repost_cnt INTEGER NOT NULL DEFAULT 0
+                );
+
+                CREATE TABLE IF NOT EXISTS hist_market_photos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    hist_market_id INTEGER NOT NULL REFERENCES hist_market(id) ON DELETE CASCADE,
+                    ad_id INTEGER NOT NULL,
+                    file_id TEXT NOT NULL,
+                    file_unique_id TEXT NOT NULL,
+                    image_hash TEXT NOT NULL,
+                    created_at TEXT NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS ad_messages (
@@ -173,6 +217,12 @@ class Database:
                     ON market(user_id, created_at);
                 CREATE INDEX IF NOT EXISTS idx_market_photos_ad
                     ON market_photos(ad_id);
+                CREATE INDEX IF NOT EXISTS idx_hist_market_removed
+                    ON hist_market(removed_at);
+                CREATE INDEX IF NOT EXISTS idx_hist_market_ad
+                    ON hist_market(ad_id);
+                CREATE INDEX IF NOT EXISTS idx_hist_market_photos_hist
+                    ON hist_market_photos(hist_market_id);
                 CREATE INDEX IF NOT EXISTS idx_ad_messages_ad
                     ON ad_messages(ad_id);
                 CREATE INDEX IF NOT EXISTS idx_ad_messages_chat
@@ -185,8 +235,17 @@ class Database:
                     ON user_blocks(user_id, blocked_until);
                 """
             )
+            conn.execute("DROP TABLE IF EXISTS archived_ads")
             self._ensure_column(conn, "market", "author_name", "TEXT")
+            self._ensure_column(conn, "market", "archived_cnt", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(conn, "market", "repost_cnt", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "hist_market", "author_name", "TEXT")
+            self._ensure_column(conn, "hist_market", "status", "TEXT NOT NULL DEFAULT 'deleted'")
+            self._ensure_column(conn, "hist_market", "deleted_at", "TEXT")
+            self._ensure_column(conn, "hist_market", "reserved_by", "INTEGER")
+            self._ensure_column(conn, "hist_market", "reserved_at", "TEXT")
+            self._ensure_column(conn, "hist_market", "archived_cnt", "INTEGER NOT NULL DEFAULT 1")
+            self._ensure_column(conn, "hist_market", "repost_cnt", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "admins", "can_manage_admins", "INTEGER NOT NULL DEFAULT 0")
 
     def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, column_type: str) -> None:
@@ -203,41 +262,110 @@ class Database:
             ).fetchall()
         return [int(row["id"]) for row in rows]
 
-    def cleanup_old_ads(self, retention_days: int) -> None:
+    def cleanup_old_ads(self, retention_days: int, archive_retention_days: int) -> None:
         cutoff = _start_of_day(datetime.now()) - timedelta(days=retention_days)
         removed_at = datetime.now().isoformat(timespec="seconds")
+        archive_cutoff = _start_of_day(datetime.now()) - timedelta(days=archive_retention_days)
         with self.connect() as conn:
             old_active = conn.execute(
                 "SELECT * FROM market WHERE status = 'active' AND created_at < ?",
                 (cutoff.isoformat(),),
             ).fetchall()
             for row in old_active:
+                archived_cnt = int(row["archived_cnt"] or 0) + 1
                 conn.execute(
-                    """
-                    INSERT INTO hist_market (
-                        ad_id, user_id, username, author_name, ad_type, category, description, price, address,
-                        created_at, removed_at, remove_reason
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        row["id"],
-                        row["user_id"],
-                        row["username"],
-                        row["author_name"],
-                        row["ad_type"],
-                        row["category"],
-                        row["description"],
-                        row["price"],
-                        row["address"],
-                        row["created_at"],
-                        removed_at,
-                        "Истек срок показа",
-                    ),
+                    "UPDATE market SET archived_cnt = ? WHERE id = ?",
+                    (archived_cnt, row["id"]),
+                )
+                self._insert_hist_market(
+                    conn,
+                    row,
+                    removed_at=removed_at,
+                    remove_reason="retention",
+                    archived_cnt=archived_cnt,
                 )
             conn.execute("DELETE FROM market_photos WHERE ad_id IN (SELECT id FROM market WHERE created_at < ?)", (cutoff.isoformat(),))
             conn.execute("DELETE FROM ad_messages WHERE ad_id IN (SELECT id FROM market WHERE created_at < ?)", (cutoff.isoformat(),))
             conn.execute("DELETE FROM market WHERE created_at < ?", (cutoff.isoformat(),))
+            conn.execute(
+                """
+                DELETE FROM hist_market_photos
+                WHERE hist_market_id IN (SELECT id FROM hist_market WHERE removed_at < ?)
+                """,
+                (archive_cutoff.isoformat(),),
+            )
+            conn.execute("DELETE FROM hist_market WHERE removed_at < ?", (archive_cutoff.isoformat(),))
+
+    def _insert_hist_market(
+        self,
+        conn: sqlite3.Connection,
+        row: sqlite3.Row,
+        *,
+        removed_at: str,
+        remove_reason: str,
+        archived_cnt: int,
+        status: object = _USE_ROW,
+        deleted_at: object = _USE_ROW,
+        reserved_by: object = _USE_ROW,
+        reserved_at: object = _USE_ROW,
+    ) -> None:
+        cursor = conn.execute(
+            """
+            INSERT INTO hist_market (
+                ad_id, user_id, username, author_name, ad_type, category, description, price, address,
+                status, created_at, deleted_at, removed_at, remove_reason, reserved_by, reserved_at, archived_cnt,
+                repost_cnt
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row["id"],
+                row["user_id"],
+                row["username"],
+                row["author_name"],
+                row["ad_type"],
+                row["category"],
+                row["description"],
+                row["price"],
+                row["address"],
+                row["status"] if status is _USE_ROW else status,
+                row["created_at"],
+                row["deleted_at"] if deleted_at is _USE_ROW else deleted_at,
+                removed_at,
+                remove_reason,
+                row["reserved_by"] if reserved_by is _USE_ROW else reserved_by,
+                row["reserved_at"] if reserved_at is _USE_ROW else reserved_at,
+                archived_cnt,
+                row["repost_cnt"],
+            ),
+        )
+        hist_market_id = int(cursor.lastrowid)
+        photos = conn.execute(
+            """
+            SELECT file_id, file_unique_id, image_hash, created_at
+            FROM market_photos
+            WHERE ad_id = ?
+            ORDER BY id
+            """,
+            (row["id"],),
+        ).fetchall()
+        for photo in photos:
+            conn.execute(
+                """
+                INSERT INTO hist_market_photos (
+                    hist_market_id, ad_id, file_id, file_unique_id, image_hash, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    hist_market_id,
+                    row["id"],
+                    photo["file_id"],
+                    photo["file_unique_id"],
+                    photo["image_hash"],
+                    photo["created_at"],
+                ),
+            )
 
     def upsert_scheduled_job(self, name: str, *, last_run_at: str | None, next_run_at: str) -> None:
         updated_at = datetime.now().isoformat(timespec="seconds")
@@ -266,6 +394,32 @@ class Database:
             rows = conn.execute(sql, params).fetchall()
         return [_ad_from_row(row) for row in rows]
 
+    def user_active_ads(self, user_id: int) -> list[Ad]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM market
+                WHERE user_id = ? AND status = 'active'
+                ORDER BY created_at DESC, id DESC
+                """,
+                (user_id,),
+            ).fetchall()
+        return [_ad_from_row(row) for row in rows]
+
+    def user_hist_ads(self, user_id: int) -> list[HistAd]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM hist_market
+                WHERE user_id = ?
+                ORDER BY removed_at DESC, id DESC
+                """,
+                (user_id,),
+            ).fetchall()
+        return [_hist_ad_from_row(row) for row in rows]
+
     def get_ad(self, ad_id: int) -> Ad | None:
         with self.connect() as conn:
             row = conn.execute("SELECT * FROM market WHERE id = ?", (ad_id,)).fetchone()
@@ -274,6 +428,19 @@ class Database:
     def ad_photos(self, ad_id: int) -> list[str]:
         with self.connect() as conn:
             rows = conn.execute("SELECT file_id FROM market_photos WHERE ad_id = ? ORDER BY id", (ad_id,)).fetchall()
+        return [row["file_id"] for row in rows]
+
+    def hist_ad_photos(self, hist_ad_id: int) -> list[str]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT file_id
+                FROM hist_market_photos
+                WHERE hist_market_id = ?
+                ORDER BY id
+                """,
+                (hist_ad_id,),
+            ).fetchall()
         return [row["file_id"] for row in rows]
 
     def ad_photo_records(self, ad_id: int) -> list[AdPhoto]:
@@ -592,17 +759,32 @@ class Database:
         price: str | None = None,
         address: str | None = None,
         photos: list[tuple[str, str, str]] | None = None,
+        archived_cnt: int = 0,
+        repost_cnt: int = 0,
     ) -> int:
         now = datetime.now().isoformat(timespec="seconds")
         with self.connect() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO market (
-                    user_id, username, author_name, ad_type, category, description, price, address, created_at
+                    user_id, username, author_name, ad_type, category, description, price, address, created_at,
+                    archived_cnt, repost_cnt
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (user_id, username, author_name, ad_type, category, description, price, address, now),
+                (
+                    user_id,
+                    username,
+                    author_name,
+                    ad_type,
+                    category,
+                    description,
+                    price,
+                    address,
+                    now,
+                    archived_cnt,
+                    repost_cnt,
+                ),
             )
             ad_id = int(cursor.lastrowid)
             for file_id, file_unique_id, image_hash in photos or []:
@@ -614,6 +796,65 @@ class Database:
                     (ad_id, file_id, file_unique_id, image_hash, now),
                 )
         return ad_id
+
+    def repost_hist_ad(self, hist_ad_id: int, user_id: int, repost_limit: int) -> tuple[str, int | None]:
+        now = datetime.now().isoformat(timespec="seconds")
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM hist_market WHERE id = ? AND user_id = ?",
+                (hist_ad_id, user_id),
+            ).fetchone()
+            if row is None:
+                return "not_found", None
+            if row["remove_reason"] != "retention":
+                return "not_repostable", None
+            repost_cnt = int(row["repost_cnt"] or 0)
+            if repost_cnt >= repost_limit:
+                return "limit", None
+            cursor = conn.execute(
+                """
+                INSERT INTO market (
+                    user_id, username, author_name, ad_type, category, description, price, address,
+                    status, created_at, deleted_at, remove_reason, reserved_by, reserved_at,
+                    archived_cnt, repost_cnt
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, NULL, NULL, NULL, ?, ?)
+                """,
+                (
+                    row["user_id"],
+                    row["username"],
+                    row["author_name"],
+                    row["ad_type"],
+                    row["category"],
+                    row["description"],
+                    row["price"],
+                    row["address"],
+                    now,
+                    row["archived_cnt"],
+                    repost_cnt + 1,
+                ),
+            )
+            ad_id = int(cursor.lastrowid)
+            photos = conn.execute(
+                """
+                SELECT file_id, file_unique_id, image_hash
+                FROM hist_market_photos
+                WHERE hist_market_id = ?
+                ORDER BY id
+                """,
+                (hist_ad_id,),
+            ).fetchall()
+            for photo in photos:
+                conn.execute(
+                    """
+                    INSERT INTO market_photos (ad_id, file_id, file_unique_id, image_hash, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (ad_id, photo["file_id"], photo["file_unique_id"], photo["image_hash"], now),
+                )
+            conn.execute("DELETE FROM hist_market_photos WHERE hist_market_id = ?", (hist_ad_id,))
+            conn.execute("DELETE FROM hist_market WHERE id = ?", (hist_ad_id,))
+        return "ok", ad_id
 
     def mark_deleted(self, ad_id: int, reason: str) -> None:
         removed_at_dt = datetime.now()
@@ -628,36 +869,30 @@ class Database:
                 conn.execute("DELETE FROM ad_messages WHERE ad_id = ?", (ad_id,))
                 conn.execute("DELETE FROM market WHERE id = ?", (ad_id,))
                 return
+            archived_cnt = int(row["archived_cnt"] or 0) + 1
             conn.execute(
                 """
                 UPDATE market
-                SET status = 'deleted', deleted_at = ?, remove_reason = ?, reserved_by = NULL, reserved_at = NULL
+                SET status = 'deleted',
+                    deleted_at = ?,
+                    remove_reason = ?,
+                    reserved_by = NULL,
+                    reserved_at = NULL,
+                    archived_cnt = ?
                 WHERE id = ?
                 """,
-                (removed_at, reason, ad_id),
+                (removed_at, reason, archived_cnt, ad_id),
             )
-            conn.execute(
-                """
-                INSERT INTO hist_market (
-                    ad_id, user_id, username, author_name, ad_type, category, description, price, address,
-                    created_at, removed_at, remove_reason
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    row["id"],
-                    row["user_id"],
-                    row["username"],
-                    row["author_name"],
-                    row["ad_type"],
-                    row["category"],
-                    row["description"],
-                    row["price"],
-                    row["address"],
-                    row["created_at"],
-                    removed_at,
-                    reason,
-                ),
+            self._insert_hist_market(
+                conn,
+                row,
+                removed_at=removed_at,
+                remove_reason=reason,
+                archived_cnt=archived_cnt,
+                status="deleted",
+                deleted_at=removed_at,
+                reserved_by=None,
+                reserved_at=None,
             )
 
     def reserve(self, ad_id: int, user_id: int) -> bool:
@@ -705,6 +940,31 @@ def _ad_from_row(row: sqlite3.Row) -> Ad:
         created_at=str(row["created_at"]),
         deleted_at=row["deleted_at"],
         reserved_by=row["reserved_by"],
+        archived_cnt=int(row["archived_cnt"] or 0),
+        repost_cnt=int(row["repost_cnt"] or 0),
+    )
+
+
+def _hist_ad_from_row(row: sqlite3.Row) -> HistAd:
+    return HistAd(
+        id=int(row["id"]),
+        ad_id=int(row["ad_id"]),
+        user_id=int(row["user_id"]),
+        username=row["username"],
+        author_name=row["author_name"],
+        ad_type=str(row["ad_type"]),
+        category=str(row["category"]),
+        description=str(row["description"]),
+        price=row["price"],
+        address=row["address"],
+        status=str(row["status"]),
+        created_at=str(row["created_at"]),
+        deleted_at=row["deleted_at"],
+        removed_at=str(row["removed_at"]),
+        remove_reason=str(row["remove_reason"]),
+        reserved_by=row["reserved_by"],
+        archived_cnt=int(row["archived_cnt"] or 0),
+        repost_cnt=int(row["repost_cnt"] or 0),
     )
 
 

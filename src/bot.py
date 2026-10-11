@@ -774,7 +774,7 @@ def next_retention_cleanup_at(now: datetime | None = None) -> datetime:
 async def run_retention_cleanup(bot: Bot, ctx: AppContext) -> None:
     for ad_id in ctx.db.expired_active_ad_ids(ctx.settings.retention_period_days):
         await delete_known_messages(bot, ctx, ad_id)
-    ctx.db.cleanup_old_ads(ctx.settings.retention_period_days)
+    ctx.db.cleanup_old_ads(ctx.settings.retention_period_days, ctx.settings.retention_archive_period)
 
 
 async def retention_cleanup_scheduler(bot: Bot, ctx: AppContext) -> None:
