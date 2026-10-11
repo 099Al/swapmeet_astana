@@ -167,14 +167,6 @@ def remove_reason_keyboard(ad_id: int, ad_type: str) -> InlineKeyboardMarkup:
     )
 
 
-def active_ad_link_keyboard(url: str | None) -> InlineKeyboardMarkup | None:
-    if url is None:
-        return None
-    return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="Открыть объявление", url=url)]]
-    )
-
-
 def repost_ad_keyboard(hist_ad_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
