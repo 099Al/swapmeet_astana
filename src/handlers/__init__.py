@@ -10,13 +10,13 @@ from .my_ads import register_my_ads_handlers
 from .release_reserve import register_release_reserve_handlers
 from .remove import register_remove_handlers
 from .reserve import register_reserve_handlers
-from keyboards import BTN_EDIT_AD, BTN_REMOVE_AD, BTN_RESERVE
+from keyboards import BTN_EDIT_AD, BTN_RELEASE_RESERVE, BTN_REMOVE_AD, BTN_RESERVE
 
 
 def register_reply_menu_handlers(router: Router, ctx, deps) -> None:
     CreateAd = deps.CreateAd
 
-    @router.message(F.text.in_({BTN_REMOVE_AD, BTN_EDIT_AD, BTN_RESERVE}))
+    @router.message(F.text.in_({BTN_REMOVE_AD, BTN_EDIT_AD, BTN_RESERVE, BTN_RELEASE_RESERVE}))
     async def interrupt_with_menu_action(message: Message, state: FSMContext) -> None:
         if message.chat.type != "private":
             return
@@ -29,6 +29,9 @@ def register_reply_menu_handlers(router: Router, ctx, deps) -> None:
             await message.answer("Укажите номер объявления.")
         elif message.text == BTN_RESERVE:
             await state.set_state(CreateAd.reserve_number)
+            await message.answer("Введите номер объявления.")
+        elif message.text == BTN_RELEASE_RESERVE:
+            await state.set_state(CreateAd.release_reserve_number)
             await message.answer("Введите номер объявления.")
 
     register_my_ads_handlers(router, ctx, deps)
