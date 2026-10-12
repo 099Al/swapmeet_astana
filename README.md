@@ -24,7 +24,7 @@ Telegram-бот для объявлений купли, продажи и обм
 
 ```env
 BOT_TOKEN=put-telegram-bot-token-here
-DATABASE_PATH=data/bot.db
+DATA_DIR=data
 FSM_STORAGE=memory
 REDIS_URL=redis://localhost:6379/0
 PUBLICATION_CHAT_ID=@swapmeet_astana
@@ -94,10 +94,10 @@ python -m bot
 cp .env.example .env
 ```
 
-База проекта хранится в `data/bot.db`. В Docker этот каталог монтируется в контейнер как `/app/data`, а `DATABASE_PATH` внутри образа задан как `/app/data/bot.db`.
+База проекта хранится в `data/bot.db`. В Docker этот каталог монтируется в контейнер как `/app/data`, а `DATA_DIR` внутри образа задан как `/app/data`.
 
 ```env
-DATABASE_PATH=data/bot.db
+DATA_DIR=data
 ```
 
 Dockerfile лежит в корне проекта. Соберите и запустите бота:

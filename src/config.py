@@ -10,7 +10,7 @@ from dotenv import find_dotenv, load_dotenv
 @dataclass(frozen=True)
 class Settings:
     bot_token: str
-    database_path: str = "bot.db"
+    database_path: str = "data/bot.db"
     fsm_storage: str = "memory"
     redis_url: str = "redis://localhost:6379/0"
     publication_chat_id: str | int = "@swapmeet_astana"
@@ -40,7 +40,7 @@ def load_settings() -> Settings:
     token = os.getenv("BOT_TOKEN", "").strip()
     if not token:
         raise RuntimeError("BOT_TOKEN is required. Put it into .env or environment variables.")
-    database_path = _resolve_database_path(os.getenv("DATABASE_PATH", "bot.db"), env_path)
+    database_path = str(_resolve_data_dir(os.getenv("DATA_DIR", "data"), env_path) / "bot.db")
     fsm_storage = os.getenv("FSM_STORAGE", "memory").strip().lower()
     if fsm_storage not in {"memory", "redis"}:
         raise RuntimeError("FSM_STORAGE must be either 'memory' or 'redis'.")
@@ -65,12 +65,12 @@ def load_settings() -> Settings:
     )
 
 
-def _resolve_database_path(value: str, env_path: str) -> str:
+def _resolve_data_dir(value: str, env_path: str) -> Path:
     path = Path(value).expanduser()
     if path.is_absolute():
-        return str(path)
+        return path
     base_dir = Path(env_path).parent if env_path else Path.cwd()
-    return str(base_dir / path)
+    return base_dir / path
 
 
 def _get_int_list(name: str) -> tuple[int, ...]:
