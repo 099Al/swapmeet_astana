@@ -313,7 +313,7 @@ async def ask_sell_photos(message: Message, state: FSMContext) -> None:
         message,
         state,
         render_sell_photo_prompt(len(photos)),
-        reply_markup=sell_photo_inline_menu(has_photos=bool(photos)),
+        reply_markup=sell_photo_inline_menu(has_photos=bool(photos), require_photos=True),
     )
 
 
@@ -337,10 +337,7 @@ async def ask_sell_description(message: Message, state: FSMContext, category: st
 def render_sell_photo_prompt(photo_count: int) -> str:
     remaining = max(MAX_SELL_PHOTOS - photo_count, 0)
     if photo_count == 0:
-        return (
-            f"Отправьте фото {remaining}/{MAX_SELL_PHOTOS}.\n"
-            "Или перейдите к описанию."
-        )
+        return f"Отправьте фото {remaining}/{MAX_SELL_PHOTOS}."
     return (
         f"Фото добавлено. {remaining}/{MAX_SELL_PHOTOS}.\n"
         "Отправьте еще фото или перейдите к описанию."

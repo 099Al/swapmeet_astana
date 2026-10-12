@@ -762,6 +762,8 @@ class Database:
         archived_cnt: int = 0,
         repost_cnt: int = 0,
     ) -> int:
+        if ad_type == "sell" and not photos:
+            raise ValueError("Sell ads require at least one photo.")
         now = datetime.now().isoformat(timespec="seconds")
         with self.connect() as conn:
             cursor = conn.execute(
@@ -811,6 +813,17 @@ class Database:
             repost_cnt = int(row["repost_cnt"] or 0)
             if repost_cnt >= repost_limit:
                 return "limit", None
+            photos = conn.execute(
+                """
+                SELECT file_id, file_unique_id, image_hash
+                FROM hist_market_photos
+                WHERE hist_market_id = ?
+                ORDER BY id
+                """,
+                (hist_ad_id,),
+            ).fetchall()
+            if row["ad_type"] == "sell" and not photos:
+                return "no_photos", None
             cursor = conn.execute(
                 """
                 INSERT INTO market (
@@ -835,15 +848,6 @@ class Database:
                 ),
             )
             ad_id = int(cursor.lastrowid)
-            photos = conn.execute(
-                """
-                SELECT file_id, file_unique_id, image_hash
-                FROM hist_market_photos
-                WHERE hist_market_id = ?
-                ORDER BY id
-                """,
-                (hist_ad_id,),
-            ).fetchall()
             for photo in photos:
                 conn.execute(
                     """

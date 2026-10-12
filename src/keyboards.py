@@ -71,11 +71,11 @@ def create_inline_menu() -> InlineKeyboardMarkup:
     )
 
 
-def sell_photo_inline_menu(has_photos: bool = False) -> InlineKeyboardMarkup:
+def sell_photo_inline_menu(has_photos: bool = False, *, require_photos: bool = False) -> InlineKeyboardMarkup:
     rows = []
     if has_photos:
         rows.append([InlineKeyboardButton(text="Перейти к описанию", callback_data="sell_photos:description")])
-    else:
+    elif not require_photos:
         rows.append([InlineKeyboardButton(text=BTN_SKIP_PHOTOS, callback_data="sell_photos:skip")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

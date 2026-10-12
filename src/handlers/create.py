@@ -272,16 +272,26 @@ def register_create_handlers(router: Router, ctx, deps) -> None:
         data = await state.get_data()
         photos: list[tuple[str, str, str]] = data.get("photos", [])
         if action == "skip":
-            photos = []
-            await state.update_data(photos=photos)
-        if action == "description" and not photos:
-            await callback.answer("Сначала добавьте фото или перейдите к описанию без фото.", show_alert=True)
+            if current_state == CreateAd.buy_photos.state:
+                photos = []
+                await state.update_data(photos=photos)
+                await deps.ask_buy_description(callback.message, state)
+                await callback.answer()
+                return
+            await callback.answer("Для объявления на продажу нужно добавить хотя бы одно фото.", show_alert=True)
             return
-        if not await _validate_sell_photos(callback.message, state, callback=callback):
+        if action == "description" and not photos:
+            if current_state == CreateAd.buy_photos.state:
+                await deps.ask_buy_description(callback.message, state)
+                await callback.answer()
+                return
+            await callback.answer("Сначала добавьте фото.", show_alert=True)
             return
         if current_state == CreateAd.buy_photos.state:
             await deps.ask_buy_description(callback.message, state)
         else:
+            if not await _validate_sell_photos(callback.message, state, callback=callback):
+                return
             await deps.ask_sell_description_from_state(callback.message, state)
         await callback.answer()
 
@@ -318,7 +328,10 @@ def register_create_handlers(router: Router, ctx, deps) -> None:
                 callback.message,
                 state,
                 deps.render_sell_photo_prompt(len(data.get("photos", []))),
-                reply_markup=sell_photo_inline_menu(has_photos=bool(data.get("photos", []))),
+                reply_markup=sell_photo_inline_menu(
+                    has_photos=bool(data.get("photos", [])),
+                    require_photos=True,
+                ),
             )
         elif target == "buy_photos":
             await deps.ask_buy_photos(callback.message, state)
@@ -345,6 +358,9 @@ def register_create_handlers(router: Router, ctx, deps) -> None:
             return
         data = await state.get_data()
         photos: list[tuple[str, str, str]] = data.get("photos", [])
+        if not photos:
+            await callback.answer("Нужно добавить хотя бы одно фото.", show_alert=True)
+            return
         required_fields = ("category", "description", "price", "address")
         if any(not data.get(field) for field in required_fields):
             await callback.answer("Не все поля заполнены", show_alert=True)
@@ -459,6 +475,13 @@ def register_create_handlers(router: Router, ctx, deps) -> None:
     async def _validate_sell_photos(message: Message, state: FSMContext, callback: CallbackQuery | None = None) -> bool:
         data = await state.get_data()
         photos: list[tuple[str, str, str]] = data.get("photos", [])
+        if not photos:
+            text = "Нужно добавить хотя бы одно фото."
+            if callback is None:
+                await message.answer(text)
+            else:
+                await callback.answer(text, show_alert=True)
+            return False
         if deps.has_duplicate_in_batch([item[2] for item in photos]):
             if callback is None:
                 await state.clear()

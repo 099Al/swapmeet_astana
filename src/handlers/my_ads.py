@@ -37,6 +37,9 @@ def register_my_ads_handlers(router: Router, ctx, deps) -> None:
                 show_alert=True,
             )
             return
+        if status == "no_photos":
+            await callback.answer("Объявление нельзя повторно опубликовать без фото.", show_alert=True)
+            return
         if ad_id is None:
             await callback.answer("Не удалось опубликовать объявление.", show_alert=True)
             return
