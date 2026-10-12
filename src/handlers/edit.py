@@ -227,6 +227,11 @@ def register_edit_handlers(router: Router, ctx, deps) -> None:
         if not selected:
             await callback.answer("Выберите фото.", show_alert=True)
             return
+        ad = ctx.db.get_ad(ad_id)
+        photos = ctx.db.ad_photos(ad_id)
+        if ad is not None and ad.ad_type == "sell" and len(photos) - len(set(selected)) < 1:
+            await callback.answer("У объявления должно остаться хотя бы одно фото.", show_alert=True)
+            return
         ctx.db.delete_ad_photos_by_indexes(ad_id, selected)
         await deps.republish_ad(callback.bot, ctx, ad_id)
         await state.set_state(CreateAd.edit_photo_menu)
