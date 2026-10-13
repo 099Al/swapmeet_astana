@@ -29,12 +29,8 @@ FSM_STORAGE=memory
 REDIS_URL=redis://localhost:6379/0
 PUBLICATION_CHAT_ID=@swapmeet_astana
 COMMUNICATION_TOPIC_ID=
-TOPIC_OTHER_ID=
-TOPIC_ANIMALS_ID=
-TOPIC_BOOKS_ID=
-TOPIC_HOME_ID=
-TOPIC_KIDS_ID=
-TOPIC_CLOTHES_ID=
+TOPIC_SELL_ID=
+TOPIC_FIND_ID=
 COMMUNICATION_DAILY_MESSAGE_LIMIT=20
 BUY_DAILY_LIMIT=2
 USER_DAILY_AD_LIMIT=10
@@ -47,15 +43,11 @@ ADMIN_IDS=
 Для публикации объявлений в темы Telegram укажите `message_thread_id` нужных тем:
 
 ```env
-TOPIC_OTHER_ID=
-TOPIC_ANIMALS_ID=
-TOPIC_BOOKS_ID=
-TOPIC_HOME_ID=
-TOPIC_KIDS_ID=
-TOPIC_CLOTHES_ID=
+TOPIC_SELL_ID=
+TOPIC_FIND_ID=
 ```
 
-Если ID темы для категории не указан, объявление публикуется в `General`.
+Если ID темы для типа объявления не указан, объявление публикуется в `General`.
 
 ### Таблицы SQLite
 

@@ -15,6 +15,8 @@ class Settings:
     redis_url: str = "redis://localhost:6379/0"
     publication_chat_id: str | int = "@swapmeet_astana"
     communication_topic_id: int | None = None
+    sell_topic_id: int | None = None
+    find_topic_id: int | None = None
     communication_daily_message_limit: int = 20
     buy_daily_limit: int = 2
     user_daily_ad_limit: int = 10
@@ -24,7 +26,6 @@ class Settings:
     retention_archive_period: int = 30
     repost_limit: int = 5
     admin_ids: tuple[int, ...] = ()
-    category_topic_ids: dict[str, int] | None = None
 
 
 def _get_int(name: str, default: int) -> int:
@@ -52,6 +53,8 @@ def load_settings() -> Settings:
         redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0").strip(),
         publication_chat_id=_get_chat_id(os.getenv("PUBLICATION_CHAT_ID", "@swapmeet_astana")),
         communication_topic_id=_get_optional_int("COMMUNICATION_TOPIC_ID"),
+        sell_topic_id=_get_optional_int("TOPIC_SELL_ID"),
+        find_topic_id=_get_optional_int("TOPIC_FIND_ID"),
         communication_daily_message_limit=_get_int("COMMUNICATION_DAILY_MESSAGE_LIMIT", 20),
         buy_daily_limit=_get_int("BUY_DAILY_LIMIT", 2),
         user_daily_ad_limit=_get_int("USER_DAILY_AD_LIMIT", 10),
@@ -61,7 +64,6 @@ def load_settings() -> Settings:
         retention_archive_period=_get_int("RETENTION_ARCHIVE_PERIOD", 30),
         repost_limit=_get_int("REPOST_LIMIT", 5),
         admin_ids=_get_int_list("ADMIN_IDS"),
-        category_topic_ids=_get_category_topic_ids(),
     )
 
 
@@ -85,18 +87,6 @@ def _get_optional_int(name: str) -> int | None:
     if not value:
         return None
     return int(value)
-
-
-def _get_category_topic_ids() -> dict[str, int]:
-    topics = {
-        "Дом(быт/ремонт)": _get_optional_int("TOPIC_HOME_ID"),
-        "Другое": _get_optional_int("TOPIC_OTHER_ID"),
-        "Одежда": _get_optional_int("TOPIC_CLOTHES_ID"),
-        "Животные": _get_optional_int("TOPIC_ANIMALS_ID"),
-        "Книги": _get_optional_int("TOPIC_BOOKS_ID"),
-        "Детские": _get_optional_int("TOPIC_KIDS_ID"),
-    }
-    return {category: topic_id for category, topic_id in topics.items() if topic_id is not None}
 
 
 def _get_chat_id(value: str) -> str | int:
