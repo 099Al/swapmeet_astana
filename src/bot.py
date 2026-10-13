@@ -415,7 +415,7 @@ async def show_one_ad(message: Message, ctx: AppContext, ad: Ad | None, reply_ma
 async def send_ad_to_chat(bot: Bot, ctx: AppContext, chat_id: ChatId, ad: Ad) -> None:
     photos = ctx.db.ad_photos(ad.id)
     text = render_ad(ad)
-    message_thread_id = category_topic_id(ctx, ad.category)
+    message_thread_id = publication_topic_id(ctx, ad.ad_type)
     if len(photos) > 1:
         media = [
             InputMediaPhoto(media=file_id, caption=text if index == 0 else None, parse_mode=ParseMode.HTML)
@@ -465,8 +465,12 @@ async def send_ad_to_chat(bot: Bot, ctx: AppContext, chat_id: ChatId, ad: Ad) ->
         )
 
 
-def category_topic_id(ctx: AppContext, category: str) -> int | None:
-    return (ctx.settings.category_topic_ids or {}).get(category)
+def publication_topic_id(ctx: AppContext, ad_type: str) -> int | None:
+    if ad_type == "buy":
+        return ctx.settings.find_topic_id
+    if ad_type == "sell":
+        return ctx.settings.sell_topic_id
+    return None
 
 
 async def republish_ad(bot: Bot, ctx: AppContext, ad_id: int) -> None:
